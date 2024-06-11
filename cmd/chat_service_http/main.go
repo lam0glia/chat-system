@@ -6,10 +6,18 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/gocql/gocql"
 	"github.com/gorilla/websocket"
 	"github.com/lam0glia/chat-system/domain"
 	"github.com/lam0glia/chat-system/repository"
 	"github.com/lam0glia/chat-system/use_case"
+)
+
+const keyspace = "chat"
+
+var (
+	sendMessageUseCase domain.SendMessageUseCase
+	session            *gocql.Session
 )
 
 var upgrader = websocket.Upgrader{
@@ -17,11 +25,19 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
-var sendMessageUseCase domain.SendMessageUseCase
-
 func init() {
+	cluster := gocql.NewCluster("172.17.0.1")
+
+	cluster.Keyspace = keyspace
+
+	var err error
+	session, err = cluster.CreateSession()
+	if err != nil {
+		log.Fatalln(err)
+	}
+
 	sendMessageUseCase = use_case.NewSendMessage(
-		repository.NewMessage(),
+		repository.NewMessage(session),
 	)
 }
 
