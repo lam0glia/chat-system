@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/lam0glia/chat-system/domain"
 	"github.com/lam0glia/chat-system/repository"
+	"github.com/lam0glia/chat-system/service"
 	"github.com/lam0glia/chat-system/use_case"
 )
 
@@ -38,6 +39,7 @@ func init() {
 
 	sendMessageUseCase = use_case.NewSendMessage(
 		repository.NewMessage(session),
+		service.NewRandInt(),
 	)
 }
 

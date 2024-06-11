@@ -3,7 +3,7 @@ package domain
 import "context"
 
 type Message struct {
-	ID         int
+	ID         *int
 	SenderID   int    `json:"from"`
 	ReceiverID int    `json:"to"`
 	Content    string `json:"content"`
