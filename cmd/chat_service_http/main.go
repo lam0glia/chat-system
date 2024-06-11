@@ -1,16 +1,28 @@
 package main
 
 import (
-	"fmt"
+	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 
 	"github.com/gorilla/websocket"
+	"github.com/lam0glia/chat-system/domain"
+	"github.com/lam0glia/chat-system/repository"
+	"github.com/lam0glia/chat-system/use_case"
 )
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
+}
+
+var sendMessageUseCase domain.SendMessageUseCase
+
+func init() {
+	sendMessageUseCase = use_case.NewSendMessage(
+		repository.NewMessage(),
+	)
 }
 
 func main() {
@@ -27,15 +39,21 @@ func main() {
 
 		defer conn.Close()
 
-		_, p, err := conn.ReadMessage()
-		if err != nil {
-			log.Printf("failed to read message: %s", err.Error())
-			return
+		for {
+			_, reader, err := conn.NextReader()
+			if err != nil {
+				log.Printf("failed to read message received from peer: %s", err.Error())
+				break
+			}
+
+			var message domain.Message
+
+			if err = json.NewDecoder(reader).Decode(&message); err != nil {
+				log.Printf("failed to decode message from stream: %s", err)
+			} else if err = sendMessageUseCase.Execute(context.TODO(), &message); err != nil {
+				log.Println(err.Error())
+			}
 		}
-
-		fmt.Println(string(p))
-
-		conn.WriteMessage(1, []byte("I'm just a reply message"))
 	})
 
 	log.Println("Listening port 8080")
