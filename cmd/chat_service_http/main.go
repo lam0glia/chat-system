@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 	"github.com/gocql/gocql"
 	"github.com/gorilla/websocket"
 	"github.com/lam0glia/chat-system/domain"
+	"github.com/lam0glia/chat-system/queue"
 	"github.com/lam0glia/chat-system/repository"
 	"github.com/lam0glia/chat-system/service"
 	"github.com/lam0glia/chat-system/use_case"
@@ -24,8 +24,9 @@ const keyspace = "chat"
 
 var (
 	sendMessageUseCase domain.SendMessageUseCase
+	uidGenerator       domain.UIDGenerator
+	messageQueue       domain.MessageQueue
 	session            *gocql.Session
-	channel            *amqp.Channel
 )
 
 var upgrader = websocket.Upgrader{
@@ -47,12 +48,15 @@ func init() {
 	conn, err := amqp.Dial("amqp://user:password@localhost:5672/")
 	panicOnError(err, "Failed to connect to RabbitMQ")
 
-	channel, err = conn.Channel()
-	panicOnError(err, "Failed to open a channel")
+	messageQueue, err = queue.NewMessage(conn)
+	panicOnError(err, "Failed to initialize message queue")
+
+	uidGenerator = service.NewRandInt()
 
 	sendMessageUseCase = use_case.NewSendMessage(
 		repository.NewMessage(session),
-		service.NewRandInt(),
+		messageQueue,
+		uidGenerator,
 	)
 }
 
@@ -134,20 +138,18 @@ func registerUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uid, err := service.NewRandInt().NewUID(context.TODO())
+	uid, err := uidGenerator.NewUID(context.TODO())
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	channel.QueueDeclare(
-		fmt.Sprintf("msg-%d", uid), // name
-		false,                      // durable
-		false,                      // delete when unused
-		false,                      // exclusive
-		false,                      // no-wait
-		nil,                        // arguments
-	)
+	err = messageQueue.NewUserQueue(uid)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err)
+		return
+	}
 
 	w.WriteHeader(http.StatusCreated)
 }

@@ -9,6 +9,7 @@ import (
 
 type sendMessage struct {
 	messageWriter domain.MessageWriter
+	messageQueue  domain.MessageQueue
 	uidGenerator  domain.UIDGenerator
 }
 
@@ -24,15 +25,21 @@ func (uc *sendMessage) Execute(ctx context.Context, message *domain.Message) err
 		return fmt.Errorf("failed to insert message: %w", err)
 	}
 
+	if err = uc.messageQueue.Send(ctx, message); err != nil {
+		return fmt.Errorf("faield to send message to queue: %w", err)
+	}
+
 	return nil
 }
 
 func NewSendMessage(
 	messageWriter domain.MessageWriter,
+	messageQueue domain.MessageQueue,
 	uidGenerator domain.UIDGenerator,
 ) *sendMessage {
 	return &sendMessage{
 		messageWriter: messageWriter,
+		messageQueue:  messageQueue,
 		uidGenerator:  uidGenerator,
 	}
 }
