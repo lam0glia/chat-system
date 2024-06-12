@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/gocql/gocql"
 	"github.com/gorilla/websocket"
@@ -27,14 +26,13 @@ var (
 	uidGenerator       domain.UIDGenerator
 	messageQueue       domain.MessageQueue
 	session            *gocql.Session
+	queueConnection    *amqp.Connection
 )
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 }
-
-var writeMessage = []byte("Hi, how are you doing?")
 
 func init() {
 	cluster := gocql.NewCluster("172.17.0.1")
@@ -45,10 +43,10 @@ func init() {
 	session, err = cluster.CreateSession()
 	panicOnError(err, "Failed to initialize database session")
 
-	conn, err := amqp.Dial("amqp://user:password@localhost:5672/")
+	queueConnection, err = amqp.Dial("amqp://user:password@localhost:5672/")
 	panicOnError(err, "Failed to connect to RabbitMQ")
 
-	messageQueue, err = queue.NewMessage(conn)
+	messageQueue, err = queue.NewMessage(queueConnection)
 	panicOnError(err, "Failed to initialize message queue")
 
 	uidGenerator = service.NewRandInt()
@@ -80,6 +78,15 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+
+	ch, err := queueConnection.Channel()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err)
+		return
+	}
+
+	defer ch.Close()
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -119,13 +126,9 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 
-		for {
-			time.Sleep(5 * time.Second)
-
-			if err := conn.WriteMessage(1, writeMessage); err != nil {
-				log.Printf("failed to write message: %s", err.Error())
-				break
-			}
+		err := messageQueue.Consume(from, conn)
+		if err != nil {
+			log.Println("Failed to consume messages: ", err.Error())
 		}
 	}()
 

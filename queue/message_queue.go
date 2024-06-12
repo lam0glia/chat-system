@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 
+	"github.com/gorilla/websocket"
 	"github.com/lam0glia/chat-system/domain"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -48,6 +50,45 @@ func (q *message) NewUserQueue(userID int) error {
 	)
 
 	return err
+}
+
+func (q *message) Consume(userID int, conn *websocket.Conn) error {
+	msgs, err := q.ch.Consume(
+		q.getQueueName(userID), // queue
+		"",                     // consumer
+		true,                   // auto-ack
+		false,                  // exclusive
+		false,                  // no-local
+		false,                  // no-wait
+		nil,                    // args
+	)
+	if err != nil {
+		return err
+	}
+
+	var forever chan struct{}
+
+	go func() {
+		for d := range msgs {
+			var m domain.Message
+
+			err := json.Unmarshal(d.Body, &m)
+			if err != nil {
+				log.Println("Failed to decode json: " + err.Error())
+				continue
+			}
+
+			if err = conn.WriteJSON(m); err != nil {
+				log.Println("Failed to write message: " + err.Error())
+				continue
+			}
+		}
+	}()
+
+	log.Printf(" [*] Waiting for messages. To exit press CTRL+C")
+	<-forever
+
+	return nil
 }
 
 func (q *message) getQueueName(receiverID int) string {

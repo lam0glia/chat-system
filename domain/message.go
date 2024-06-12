@@ -1,6 +1,10 @@
 package domain
 
-import "context"
+import (
+	"context"
+
+	"github.com/gorilla/websocket"
+)
 
 type Message struct {
 	ID         *int   `json:"id"`
@@ -20,4 +24,5 @@ type SendMessageUseCase interface {
 type MessageQueue interface {
 	NewUserQueue(userID int) error
 	Send(ctx context.Context, msg *Message) error
+	Consume(userID int, conn *websocket.Conn) error
 }
