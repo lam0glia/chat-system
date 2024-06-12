@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/gin-gonic/gin"
 	"github.com/gocql/gocql"
 	"github.com/gorilla/websocket"
 	"github.com/lam0glia/chat-system/domain"
@@ -56,42 +57,38 @@ func init() {
 		messageQueue,
 		uidGenerator,
 	)
+
+	gin.SetMode(gin.DebugMode)
 }
 
 func main() {
-	http.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	})
+	eng := gin.Default()
 
-	http.HandleFunc("/ws", wsHandler)
-	http.HandleFunc("/users", registerUserHandler)
+	eng.GET("/ws", wsHandler)
+	eng.POST("/users", registerUserHandler)
 
-	log.Println("Listening port 8080")
-	http.ListenAndServe(":8080", nil)
+	log.Println("Listening and serving HTTP requests on port 8080")
+	eng.Run(":8080")
 }
 
-func wsHandler(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
-
-	from, err := strconv.Atoi(query.Get("from"))
+func wsHandler(c *gin.Context) {
+	from, err := strconv.Atoi(c.Query("from"))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
 
 	ch, err := queueConnection.Channel()
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log.Println(err)
+		abortWithInternalError(c, err)
 		return
 	}
 
 	defer ch.Close()
 
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		log.Printf("failed to oppen websocket connection: %s", err.Error())
-		w.WriteHeader(http.StatusInternalServerError)
+		abortWithInternalError(c, err)
 		return
 	}
 
@@ -135,26 +132,25 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 }
 
-func registerUserHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
+func registerUserHandler(c *gin.Context) {
 	uid, err := uidGenerator.NewUID(context.TODO())
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		abortWithInternalError(c, err)
 		return
 	}
 
 	err = messageQueue.NewUserQueue(uid)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log.Println(err)
+		abortWithInternalError(c, err)
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
+	c.Status(http.StatusCreated)
+}
+
+func abortWithInternalError(c *gin.Context, err error) {
+	log.Panicln(err)
+	c.AbortWithStatus(http.StatusInternalServerError)
 }
 
 func panicOnError(err error, msg string) {
