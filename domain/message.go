@@ -4,7 +4,7 @@ import "context"
 
 type Message struct {
 	ID         *int
-	SenderID   int    `json:"from"`
+	SenderID   int
 	ReceiverID int    `json:"to"`
 	Content    string `json:"content"`
 }

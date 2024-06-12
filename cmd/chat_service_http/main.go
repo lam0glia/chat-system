@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -14,6 +16,8 @@ import (
 	"github.com/lam0glia/chat-system/repository"
 	"github.com/lam0glia/chat-system/service"
 	"github.com/lam0glia/chat-system/use_case"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 const keyspace = "chat"
@@ -21,6 +25,7 @@ const keyspace = "chat"
 var (
 	sendMessageUseCase domain.SendMessageUseCase
 	session            *gocql.Session
+	channel            *amqp.Channel
 )
 
 var upgrader = websocket.Upgrader{
@@ -37,9 +42,13 @@ func init() {
 
 	var err error
 	session, err = cluster.CreateSession()
-	if err != nil {
-		log.Fatalln(err)
-	}
+	panicOnError(err, "Failed to initialize database session")
+
+	conn, err := amqp.Dial("amqp://user:password@localhost:5672/")
+	panicOnError(err, "Failed to connect to RabbitMQ")
+
+	channel, err = conn.Channel()
+	panicOnError(err, "Failed to open a channel")
 
 	sendMessageUseCase = use_case.NewSendMessage(
 		repository.NewMessage(session),
@@ -53,12 +62,21 @@ func main() {
 	})
 
 	http.HandleFunc("/ws", wsHandler)
+	http.HandleFunc("/users", registerUserHandler)
 
 	log.Println("Listening port 8080")
 	http.ListenAndServe(":8080", nil)
 }
 
 func wsHandler(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+
+	from, err := strconv.Atoi(query.Get("from"))
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("failed to oppen websocket connection: %s", err.Error())
@@ -81,7 +99,9 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 
-			var message domain.Message
+			message := domain.Message{
+				SenderID: from,
+			}
 
 			if err = json.NewDecoder(reader).Decode(&message); err != nil {
 				log.Printf("failed to decode message from stream: %s", err)
@@ -106,4 +126,34 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	wg.Wait()
+}
+
+func registerUserHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	uid, err := service.NewRandInt().NewUID(context.TODO())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	channel.QueueDeclare(
+		fmt.Sprintf("msg-%d", uid), // name
+		false,                      // durable
+		false,                      // delete when unused
+		false,                      // exclusive
+		false,                      // no-wait
+		nil,                        // arguments
+	)
+
+	w.WriteHeader(http.StatusCreated)
+}
+
+func panicOnError(err error, msg string) {
+	if err != nil {
+		log.Panicf("%s: %s", msg, err)
+	}
 }
