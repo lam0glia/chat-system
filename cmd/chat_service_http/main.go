@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/gocql/gocql"
 	"github.com/gorilla/websocket"
@@ -25,6 +27,8 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 }
+
+var writeMessage = []byte("Hi, how are you doing?")
 
 func init() {
 	cluster := gocql.NewCluster("172.17.0.1")
@@ -48,14 +52,27 @@ func main() {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			log.Printf("failed to oppen websocket connection: %s", err.Error())
-			return
-		}
+	http.HandleFunc("/ws", wsHandler)
 
-		defer conn.Close()
+	log.Println("Listening port 8080")
+	http.ListenAndServe(":8080", nil)
+}
+
+func wsHandler(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("failed to oppen websocket connection: %s", err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	defer conn.Close()
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 
 		for {
 			_, reader, err := conn.NextReader()
@@ -72,8 +89,21 @@ func main() {
 				log.Println(err.Error())
 			}
 		}
-	})
+	}()
 
-	log.Println("Listening port 8080")
-	http.ListenAndServe(":8080", nil)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		for {
+			time.Sleep(5 * time.Second)
+
+			if err := conn.WriteMessage(1, writeMessage); err != nil {
+				log.Printf("failed to write message: %s", err.Error())
+				break
+			}
+		}
+	}()
+
+	wg.Wait()
 }
