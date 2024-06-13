@@ -23,10 +23,10 @@ func (q *message) Send(ctx context.Context, msg *domain.Message) error {
 	}
 
 	err = q.ch.PublishWithContext(ctx,
-		"",                             // exchange
-		q.getQueueName(msg.ReceiverID), // routing key
-		false,                          // mandatory
-		false,                          // immediate
+		"",                       // exchange
+		q.getQueueName(msg.ToID), // routing key
+		false,                    // mandatory
+		false,                    // immediate
 		amqp.Publishing{
 			ContentType: "application/json",
 			Body:        b,
@@ -39,7 +39,7 @@ func (q *message) Send(ctx context.Context, msg *domain.Message) error {
 	return nil
 }
 
-func (q *message) NewUserQueue(userID int) error {
+func (q *message) NewUserQueue(userID uint64) error {
 	_, err := q.ch.QueueDeclare(
 		q.getQueueName(userID), // name
 		false,                  // durable
@@ -52,7 +52,7 @@ func (q *message) NewUserQueue(userID int) error {
 	return err
 }
 
-func (q *message) Consume(userID int, conn *websocket.Conn) error {
+func (q *message) Consume(userID uint64, conn *websocket.Conn) error {
 	msgs, err := q.ch.Consume(
 		q.getQueueName(userID), // queue
 		"",                     // consumer
@@ -91,7 +91,7 @@ func (q *message) Consume(userID int, conn *websocket.Conn) error {
 	return nil
 }
 
-func (q *message) getQueueName(receiverID int) string {
+func (q *message) getQueueName(receiverID uint64) string {
 	return fmt.Sprintf("msg-%d", receiverID)
 }
 

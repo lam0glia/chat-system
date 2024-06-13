@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gocql/gocql"
@@ -14,8 +15,8 @@ import (
 	"github.com/lam0glia/chat-system/domain"
 	"github.com/lam0glia/chat-system/queue"
 	"github.com/lam0glia/chat-system/repository"
-	"github.com/lam0glia/chat-system/service"
 	"github.com/lam0glia/chat-system/use_case"
+	"github.com/sony/sonyflake"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -50,7 +51,15 @@ func init() {
 	messageQueue, err = queue.NewMessage(queueConnection)
 	panicOnError(err, "Failed to initialize message queue")
 
-	uidGenerator = service.NewRandInt()
+	start, err := time.Parse("2006-01-02", "2024-06-13")
+	panicOnError(err, "Failed to parse start time")
+
+	settings := sonyflake.Settings{
+		StartTime: start,
+	}
+
+	uidGenerator, err := sonyflake.New(settings)
+	panicOnError(err, "Failed to configure sonyflake")
 
 	sendMessageUseCase = use_case.NewSendMessage(
 		repository.NewMessage(session),
@@ -64,15 +73,16 @@ func init() {
 func main() {
 	eng := gin.Default()
 
+	eng.SetTrustedProxies(nil)
+
 	eng.GET("/ws", wsHandler)
 	eng.POST("/users", registerUserHandler)
 
-	log.Println("Listening and serving HTTP requests on port 8080")
 	eng.Run(":8080")
 }
 
 func wsHandler(c *gin.Context) {
-	from, err := strconv.Atoi(c.Query("from"))
+	from, err := strconv.ParseUint(c.Query("from"), 10, 64)
 	if err != nil {
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
@@ -107,8 +117,8 @@ func wsHandler(c *gin.Context) {
 				break
 			}
 
-			message := domain.Message{
-				SenderID: from,
+			message := domain.SentMessageRequest{
+				From: from,
 			}
 
 			if err = json.NewDecoder(reader).Decode(&message); err != nil {
@@ -133,7 +143,7 @@ func wsHandler(c *gin.Context) {
 }
 
 func registerUserHandler(c *gin.Context) {
-	uid, err := uidGenerator.NewUID(context.TODO())
+	uid, err := uidGenerator.NextID()
 	if err != nil {
 		abortWithInternalError(c, err)
 		return

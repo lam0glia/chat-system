@@ -13,13 +13,18 @@ type sendMessage struct {
 	uidGenerator  domain.UIDGenerator
 }
 
-func (uc *sendMessage) Execute(ctx context.Context, message *domain.Message) error {
-	id, err := uc.uidGenerator.NewUID(ctx)
+func (uc *sendMessage) Execute(ctx context.Context, messageRequest *domain.SentMessageRequest) error {
+	id, err := uc.uidGenerator.NextID()
 	if err != nil {
 		return fmt.Errorf("failed to generate a new unique id: %w", err)
 	}
 
-	message.ID = &id
+	message := domain.NewMessage(
+		id,
+		messageRequest.From,
+		messageRequest.To,
+		messageRequest.Content,
+	)
 
 	if err = uc.messageWriter.Insert(ctx, message); err != nil {
 		return fmt.Errorf("failed to insert message: %w", err)
