@@ -59,7 +59,10 @@ func init() {
 		StartTime: start,
 	}
 
-	uidGenerator, err := sonyflake.New(settings)
+	uidGenerator, err = sonyflake.New(settings)
+	if err != nil {
+		log.Println("cavalo")
+	}
 	panicOnError(err, "Failed to configure sonyflake")
 
 	messageRepo := repository.NewMessage(session)

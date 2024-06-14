@@ -12,6 +12,8 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+const exchangeName = "messages"
+
 type message struct {
 	ch *amqp.Channel
 }
@@ -23,10 +25,10 @@ func (q *message) Send(ctx context.Context, msg *domain.Message) error {
 	}
 
 	err = q.ch.PublishWithContext(ctx,
-		"",                       // exchange
-		q.getQueueName(msg.ToID), // routing key
-		false,                    // mandatory
-		false,                    // immediate
+		exchangeName,                // exchange
+		fmt.Sprintf("%d", msg.ToID), // routing key
+		false,                       // mandatory
+		false,                       // immediate
 		amqp.Publishing{
 			ContentType: "application/json",
 			Body:        b,
@@ -40,30 +42,69 @@ func (q *message) Send(ctx context.Context, msg *domain.Message) error {
 }
 
 func (q *message) NewUserQueue(userID uint64) error {
+	qName := q.getQueueName(userID)
+
 	_, err := q.ch.QueueDeclare(
-		q.getQueueName(userID), // name
-		false,                  // durable
-		false,                  // delete when unused
-		false,                  // exclusive
-		false,                  // no-wait
-		nil,                    // arguments
+		qName, // name
+		true,  // durable
+		false, // delete when unused
+		true,  // exclusive
+		false, // no-wait
+		nil,   // arguments
 	)
+	if err != nil {
+		return fmt.Errorf("failed to declare queue %s: %w", qName, err)
+	}
+
+	err = q.ch.QueueBind(
+		qName,
+		fmt.Sprintf("%d", userID),
+		exchangeName,
+		false,
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to bind queue %s: %w", qName, err)
+	}
 
 	return err
 }
 
 func (q *message) Consume(userID uint64, conn *websocket.Conn) error {
-	msgs, err := q.ch.Consume(
-		q.getQueueName(userID), // queue
-		"",                     // consumer
-		true,                   // auto-ack
-		false,                  // exclusive
-		false,                  // no-local
-		false,                  // no-wait
-		nil,                    // args
+	qDeclared, err := q.ch.QueueDeclare(
+		"",    // name
+		false, // durable
+		false, // delete when unused
+		true,  // exclusive
+		false, // no-wait
+		nil,   // arguments
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to declare queue: %w", err)
+	}
+
+	err = q.ch.QueueBind(
+		qDeclared.Name,            // queue name
+		fmt.Sprintf("%d", userID), // routing key
+		exchangeName,              // exchange
+		false,
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to bind queue to an exchange: %w", err)
+	}
+
+	msgs, err := q.ch.Consume(
+		qDeclared.Name, // queue
+		"",             // consumer
+		false,          // auto-ack
+		false,          // exclusive
+		false,          // no-local
+		false,          // no-wait
+		nil,            // args
+	)
+	if err != nil {
+		return fmt.Errorf("failed to consume messages: %w", err)
 	}
 
 	var forever chan struct{}
@@ -82,6 +123,8 @@ func (q *message) Consume(userID uint64, conn *websocket.Conn) error {
 				log.Println("Failed to write message: " + err.Error())
 				continue
 			}
+
+			d.Ack(false)
 		}
 	}()
 
@@ -100,7 +143,20 @@ func NewMessage(
 ) (*message, error) {
 	ch, err := conn.Channel()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open channel: %s", err)
+	}
+
+	err = ch.ExchangeDeclare(
+		exchangeName,        // name
+		amqp.ExchangeDirect, // type
+		true,                // durable
+		false,               // auto-deleted
+		false,               // internal
+		false,               // no-wait
+		nil,                 // arguments
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to declare messages exchange: %w", err)
 	}
 
 	return &message{
