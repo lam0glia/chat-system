@@ -27,6 +27,7 @@ var (
 	sendMessageUseCase domain.SendMessageUseCase
 	uidGenerator       domain.UIDGenerator
 	messageQueue       domain.MessageQueue
+	messageReader      domain.MessageReader
 	session            *gocql.Session
 	queueConnection    *amqp.Connection
 )
@@ -61,11 +62,15 @@ func init() {
 	uidGenerator, err := sonyflake.New(settings)
 	panicOnError(err, "Failed to configure sonyflake")
 
+	messageRepo := repository.NewMessage(session)
+
 	sendMessageUseCase = use_case.NewSendMessage(
-		repository.NewMessage(session),
+		messageRepo,
 		messageQueue,
 		uidGenerator,
 	)
+
+	messageReader = messageRepo
 
 	gin.SetMode(gin.DebugMode)
 }
@@ -77,6 +82,7 @@ func main() {
 
 	eng.GET("/ws", wsHandler)
 	eng.POST("/users", registerUserHandler)
+	eng.GET("/messages", listMessagesHandler)
 
 	eng.Run(":8080")
 }
@@ -156,6 +162,27 @@ func registerUserHandler(c *gin.Context) {
 	}
 
 	c.Status(http.StatusCreated)
+}
+
+func listMessagesHandler(c *gin.Context) {
+	var params domain.ListMessageRequest
+	err := c.ShouldBindQuery(&params)
+	if err != nil {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+
+	messages, err := messageReader.List(
+		c.Request.Context(),
+		params.From,
+		params.To,
+		params.BeforeID,
+		10)
+	if err != nil {
+		abortWithInternalError(c, err)
+	}
+
+	c.JSON(http.StatusOK, messages)
 }
 
 func abortWithInternalError(c *gin.Context, err error) {

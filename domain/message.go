@@ -31,8 +31,18 @@ type SentMessageRequest struct {
 	Content string `json:"content"`
 }
 
+type ListMessageRequest struct {
+	BeforeID uint64 `form:"beforeId"`
+	From     uint64 `form:"from"`
+	To       uint64 `form:"to"`
+}
+
 type MessageWriter interface {
 	Insert(ctx context.Context, message *Message) error
+}
+
+type MessageReader interface {
+	List(ctx context.Context, fromID, toID, beforeID uint64, limit int) ([]Message, error)
 }
 
 type SendMessageUseCase interface {
