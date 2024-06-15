@@ -70,7 +70,7 @@ func (q *message) NewUserQueue(userID uint64) error {
 	return err
 }
 
-func (q *message) Consume(userID uint64, conn *websocket.Conn) error {
+func (q *message) Consume(userID uint64, conn *websocket.Conn, close chan bool) error {
 	qDeclared, err := q.ch.QueueDeclare(
 		"",    // name
 		false, // durable
@@ -107,8 +107,6 @@ func (q *message) Consume(userID uint64, conn *websocket.Conn) error {
 		return fmt.Errorf("failed to consume messages: %w", err)
 	}
 
-	var forever chan struct{}
-
 	go func() {
 		for d := range msgs {
 			var m domain.Message
@@ -129,7 +127,7 @@ func (q *message) Consume(userID uint64, conn *websocket.Conn) error {
 	}()
 
 	log.Printf(" [*] Waiting for messages. To exit press CTRL+C")
-	<-forever
+	<-close
 
 	return nil
 }
@@ -143,7 +141,7 @@ func NewMessage(
 ) (*message, error) {
 	ch, err := conn.Channel()
 	if err != nil {
-		return nil, fmt.Errorf("failed to open channel: %s", err)
+		return nil, fmt.Errorf("failed to open channel: %w", err)
 	}
 
 	err = ch.ExchangeDeclare(

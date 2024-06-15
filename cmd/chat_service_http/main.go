@@ -97,14 +97,6 @@ func wsHandler(c *gin.Context) {
 		return
 	}
 
-	ch, err := queueConnection.Channel()
-	if err != nil {
-		abortWithInternalError(c, err)
-		return
-	}
-
-	defer ch.Close()
-
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		abortWithInternalError(c, err)
@@ -113,16 +105,26 @@ func wsHandler(c *gin.Context) {
 
 	defer conn.Close()
 
+	ctx := c.Request.Context()
+	close := make(chan bool, 1)
+
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	go func() {
+	go func(ctx context.Context, close chan bool) {
+		defer func() {
+			close <- true
+		}()
+
 		defer wg.Done()
 
 		for {
-			_, reader, err := conn.NextReader()
+			_, r, err := conn.NextReader()
 			if err != nil {
-				log.Printf("failed to read message received from peer: %s", err.Error())
+				if _, is := err.(*websocket.CloseError); !is {
+					log.Printf("read message from peer returned an error: %s", err)
+				}
+
 				break
 			}
 
@@ -130,23 +132,23 @@ func wsHandler(c *gin.Context) {
 				From: from,
 			}
 
-			if err = json.NewDecoder(reader).Decode(&message); err != nil {
-				log.Printf("failed to decode message from stream: %s", err)
-			} else if err = sendMessageUseCase.Execute(context.TODO(), &message); err != nil {
-				log.Println(err.Error())
+			if err = json.NewDecoder(r).Decode(&message); err != nil {
+				log.Printf("failed to decode message: %s", err)
+			} else if err = sendMessageUseCase.Execute(ctx, &message); err != nil {
+				log.Printf("failed to send message: %s", err)
 			}
 		}
-	}()
+	}(ctx, close)
 
 	wg.Add(1)
-	go func() {
+	go func(close chan bool) {
 		defer wg.Done()
 
-		err := messageQueue.Consume(from, conn)
+		err := messageQueue.Consume(from, conn, close)
 		if err != nil {
 			log.Println("Failed to consume messages: ", err.Error())
 		}
-	}()
+	}(close)
 
 	wg.Wait()
 }

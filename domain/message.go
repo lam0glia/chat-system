@@ -52,5 +52,5 @@ type SendMessageUseCase interface {
 type MessageQueue interface {
 	NewUserQueue(userID uint64) error
 	Send(ctx context.Context, msg *Message) error
-	Consume(userID uint64, conn *websocket.Conn) error
+	Consume(userID uint64, conn *websocket.Conn, close chan bool) error
 }
