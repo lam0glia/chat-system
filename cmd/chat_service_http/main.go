@@ -28,6 +28,7 @@ var (
 	uidGenerator       domain.UIDGenerator
 	messageQueue       domain.MessageQueue
 	messageReader      domain.MessageReader
+	presenceWriter     domain.PresenceWriter
 	session            *gocql.Session
 	queueConnection    *amqp.Connection
 )
@@ -86,6 +87,7 @@ func main() {
 	eng.GET("/ws", wsHandler)
 	eng.POST("/users", registerUserHandler)
 	eng.GET("/messages", listMessagesHandler)
+	eng.GET("/ws/presence", presenceWSHandler)
 
 	eng.Run(":8080")
 }
@@ -188,6 +190,96 @@ func listMessagesHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, messages)
+}
+
+func presenceWSHandler(c *gin.Context) {
+	from, err := strconv.ParseUint(c.Query("from"), 10, 64)
+	if err != nil {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		abortWithInternalError(c, err)
+		return
+	}
+
+	defer conn.Close()
+
+	ctx := c.Request.Context()
+
+	defer func() {
+		var err error
+		if err = presenceWriter.Update(ctx, from, true); err != nil {
+			log.Printf("err: update presence: %s", err)
+		}
+	}()
+
+	ticker := time.NewTicker(5 * time.Second)
+
+	conn.SetPongHandler(func(appData string) error {
+		log.Println("pong received")
+
+		var err error
+		if err = presenceWriter.Update(ctx, from, true); err != nil {
+			log.Printf("err: update presence: %s", err)
+		}
+
+		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		ticker.Reset(5 * time.Second)
+		return nil
+	})
+
+	stop := make(chan struct{}, 1)
+
+	conn.SetReadDeadline(time.Now().Add(35 * time.Second))
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func(conn *websocket.Conn, stop chan struct{}) {
+		defer func() {
+			ticker.Stop()
+			wg.Done()
+		}()
+
+		for {
+			select {
+			case <-ticker.C:
+				err = conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
+				ticker.Reset(30 * time.Second)
+				log.Println("ping sent")
+				if err != nil {
+					log.Printf("err: send ping message: %s", err)
+					ticker.Reset(5 * time.Second)
+				}
+			case <-stop:
+				return
+			}
+
+		}
+	}(conn, stop)
+
+	wg.Add(1)
+	go func(c *websocket.Conn, stop chan struct{}) {
+		defer func() {
+			stop <- struct{}{}
+			wg.Done()
+		}()
+
+		for {
+			if _, _, err := c.NextReader(); err != nil {
+				if _, is := err.(*websocket.CloseError); !is {
+					log.Printf("err: read message: %s", err)
+				}
+
+				break
+			}
+		}
+	}(conn, stop)
+
+	wg.Wait()
 }
 
 func abortWithInternalError(c *gin.Context, err error) {
