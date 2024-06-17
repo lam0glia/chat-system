@@ -16,6 +16,7 @@ import (
 	"github.com/lam0glia/chat-system/queue"
 	"github.com/lam0glia/chat-system/repository"
 	"github.com/lam0glia/chat-system/use_case"
+	"github.com/redis/go-redis/v9"
 	"github.com/sony/sonyflake"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -25,10 +26,12 @@ const keyspace = "chat"
 
 var (
 	sendMessageUseCase domain.SendMessageUseCase
+	updatePresence     domain.UpdatePresenceUseCase
 	uidGenerator       domain.UIDGenerator
 	messageQueue       domain.MessageQueue
 	messageReader      domain.MessageReader
 	presenceWriter     domain.PresenceWriter
+	presenceConsumer   domain.PresenceConsumer
 	session            *gocql.Session
 	queueConnection    *amqp.Connection
 )
@@ -75,6 +78,26 @@ func init() {
 	)
 
 	messageReader = messageRepo
+
+	opts, err := redis.ParseURL("redis://user@localhost:6379/0?protocol=3")
+	panicOnError(err, "failed to parse redis url")
+
+	redisClient := redis.NewClient(opts)
+
+	presenceRepository := repository.NewPresence(redisClient)
+
+	presenceWriter = presenceRepository
+
+	presenceQueue, err := queue.NewPresence(queueConnection)
+	panicOnError(err, "failed to initialize presence queue")
+
+	updatePresence = use_case.NewUpdatePresence(
+		presenceRepository,
+		presenceRepository,
+		presenceQueue,
+	)
+
+	presenceConsumer = presenceQueue
 
 	gin.SetMode(gin.DebugMode)
 }
@@ -199,6 +222,27 @@ func presenceWSHandler(c *gin.Context) {
 		return
 	}
 
+	ctx := c.Request.Context()
+
+	presence := domain.Presence{
+		Online: true,
+		UserID: from,
+	}
+
+	defer func() {
+		presence.Online = false
+
+		var err error
+		if err = updatePresence.Execute(ctx, &presence); err != nil {
+			log.Println("err: update presence")
+		}
+	}()
+
+	if err = updatePresence.Execute(ctx, &presence); err != nil {
+		abortWithInternalError(c, err)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		abortWithInternalError(c, err)
@@ -207,19 +251,10 @@ func presenceWSHandler(c *gin.Context) {
 
 	defer conn.Close()
 
-	ctx := c.Request.Context()
-
-	defer func() {
-		var err error
-		if err = presenceWriter.Update(ctx, from, true); err != nil {
-			log.Printf("err: update presence: %s", err)
-		}
-	}()
-
 	ticker := time.NewTicker(5 * time.Second)
 
 	conn.SetPongHandler(func(appData string) error {
-		log.Println("pong received")
+		log.Println("Pong received")
 
 		var err error
 		if err = presenceWriter.Update(ctx, from, true); err != nil {
@@ -228,10 +263,11 @@ func presenceWSHandler(c *gin.Context) {
 
 		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 		ticker.Reset(5 * time.Second)
+
 		return nil
 	})
 
-	stop := make(chan struct{}, 1)
+	stop := make(chan struct{})
 
 	conn.SetReadDeadline(time.Now().Add(35 * time.Second))
 
@@ -239,23 +275,25 @@ func presenceWSHandler(c *gin.Context) {
 
 	wg.Add(1)
 	go func(conn *websocket.Conn, stop chan struct{}) {
-		defer func() {
-			ticker.Stop()
-			wg.Done()
-		}()
+		defer wg.Done()
+		defer log.Println("Closed ping goroutine")
 
 		for {
 			select {
-			case <-ticker.C:
-				err = conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
-				ticker.Reset(30 * time.Second)
-				log.Println("ping sent")
-				if err != nil {
-					log.Printf("err: send ping message: %s", err)
-					ticker.Reset(5 * time.Second)
-				}
 			case <-stop:
 				return
+			default:
+				<-ticker.C
+				err = conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
+				ticker.Reset(30 * time.Second)
+				if err != nil {
+					if err != websocket.ErrCloseSent {
+						log.Printf("err: send ping message: %s", err)
+						ticker.Reset(5 * time.Second)
+					}
+				} else {
+					log.Println("Ping sent")
+				}
 			}
 
 		}
@@ -264,13 +302,17 @@ func presenceWSHandler(c *gin.Context) {
 	wg.Add(1)
 	go func(c *websocket.Conn, stop chan struct{}) {
 		defer func() {
-			stop <- struct{}{}
+			log.Println("Closed message goroutine")
+			close(stop)
+			ticker.Reset(1)
 			wg.Done()
 		}()
 
 		for {
 			if _, _, err := c.NextReader(); err != nil {
-				if _, is := err.(*websocket.CloseError); !is {
+				if closeErr, is := err.(*websocket.CloseError); is {
+					log.Printf("Close message received: [%d] %s", closeErr.Code, closeErr.Text)
+				} else {
 					log.Printf("err: read message: %s", err)
 				}
 
@@ -278,6 +320,8 @@ func presenceWSHandler(c *gin.Context) {
 			}
 		}
 	}(conn, stop)
+
+	go presenceConsumer.Consume(ctx, from, conn, stop)
 
 	wg.Wait()
 }
