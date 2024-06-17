@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gocql/gocql"
 	"github.com/gorilla/websocket"
+	"github.com/lam0glia/chat-system/bootstrap"
 	"github.com/lam0glia/chat-system/domain"
 	"github.com/lam0glia/chat-system/queue"
 	"github.com/lam0glia/chat-system/repository"
@@ -34,6 +36,7 @@ var (
 	presenceConsumer   domain.PresenceConsumer
 	session            *gocql.Session
 	queueConnection    *amqp.Connection
+	env                *bootstrap.Env
 )
 
 var upgrader = websocket.Upgrader{
@@ -42,21 +45,24 @@ var upgrader = websocket.Upgrader{
 }
 
 func init() {
-	cluster := gocql.NewCluster("172.17.0.1")
+	var err error
+	env, err = bootstrap.NewEnv()
+	panicOnError(err, "failed to load env")
+
+	cluster := gocql.NewCluster(env.CassandraHosts...)
 
 	cluster.Keyspace = keyspace
 
-	var err error
 	session, err = cluster.CreateSession()
 	panicOnError(err, "Failed to initialize database session")
 
-	queueConnection, err = amqp.Dial("amqp://user:password@localhost:5672/")
+	queueConnection, err = amqp.Dial(env.RabbitMQURL)
 	panicOnError(err, "Failed to connect to RabbitMQ")
 
 	messageQueue, err = queue.NewMessage(queueConnection)
 	panicOnError(err, "Failed to initialize message queue")
 
-	start, err := time.Parse("2006-01-02", "2024-06-13")
+	start, err := time.Parse("2006-01-02", env.UIDGeneratorStartTime)
 	panicOnError(err, "Failed to parse start time")
 
 	settings := sonyflake.Settings{
@@ -64,9 +70,6 @@ func init() {
 	}
 
 	uidGenerator, err = sonyflake.New(settings)
-	if err != nil {
-		log.Println("cavalo")
-	}
 	panicOnError(err, "Failed to configure sonyflake")
 
 	messageRepo := repository.NewMessage(session)
@@ -79,7 +82,7 @@ func init() {
 
 	messageReader = messageRepo
 
-	opts, err := redis.ParseURL("redis://user@localhost:6379/0?protocol=3")
+	opts, err := redis.ParseURL(env.RedisURL)
 	panicOnError(err, "failed to parse redis url")
 
 	redisClient := redis.NewClient(opts)
@@ -112,7 +115,7 @@ func main() {
 	eng.GET("/messages", listMessagesHandler)
 	eng.GET("/ws/presence", presenceWSHandler)
 
-	eng.Run(":8080")
+	eng.Run(fmt.Sprintf(":%d", env.HTTPPortNumber))
 }
 
 func wsHandler(c *gin.Context) {
