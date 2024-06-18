@@ -11,20 +11,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gocql/gocql"
 	"github.com/gorilla/websocket"
 	"github.com/lam0glia/chat-system/bootstrap"
 	"github.com/lam0glia/chat-system/domain"
 	"github.com/lam0glia/chat-system/queue"
 	"github.com/lam0glia/chat-system/repository"
 	"github.com/lam0glia/chat-system/use_case"
-	"github.com/redis/go-redis/v9"
 	"github.com/sony/sonyflake"
-
-	amqp "github.com/rabbitmq/amqp091-go"
 )
-
-const keyspace = "chat"
 
 var (
 	sendMessageUseCase domain.SendMessageUseCase
@@ -34,9 +28,7 @@ var (
 	messageReader      domain.MessageReader
 	presenceWriter     domain.PresenceWriter
 	presenceConsumer   domain.PresenceConsumer
-	session            *gocql.Session
-	queueConnection    *amqp.Connection
-	env                *bootstrap.Env
+	app                *bootstrap.App
 )
 
 var upgrader = websocket.Upgrader{
@@ -46,23 +38,10 @@ var upgrader = websocket.Upgrader{
 
 func init() {
 	var err error
-	env, err = bootstrap.NewEnv()
-	panicOnError(err, "failed to load env")
+	app, err = bootstrap.NewApp()
+	panicOnError(err, "failed to bootstrap app")
 
-	cluster := gocql.NewCluster(env.CassandraHosts...)
-
-	cluster.Keyspace = keyspace
-
-	session, err = cluster.CreateSession()
-	panicOnError(err, "Failed to initialize database session")
-
-	queueConnection, err = amqp.Dial(env.RabbitMQURL)
-	panicOnError(err, "Failed to connect to RabbitMQ")
-
-	messageQueue, err = queue.NewMessage(queueConnection)
-	panicOnError(err, "Failed to initialize message queue")
-
-	start, err := time.Parse("2006-01-02", env.UIDGeneratorStartTime)
+	start, err := time.Parse("2006-01-02", app.Env.UIDGeneratorStartTime)
 	panicOnError(err, "Failed to parse start time")
 
 	settings := sonyflake.Settings{
@@ -72,7 +51,7 @@ func init() {
 	uidGenerator, err = sonyflake.New(settings)
 	panicOnError(err, "Failed to configure sonyflake")
 
-	messageRepo := repository.NewMessage(session)
+	messageRepo := repository.NewMessage(app.CassandraSession)
 
 	sendMessageUseCase = use_case.NewSendMessage(
 		messageRepo,
@@ -82,16 +61,11 @@ func init() {
 
 	messageReader = messageRepo
 
-	opts, err := redis.ParseURL(env.RedisURL)
-	panicOnError(err, "failed to parse redis url")
-
-	redisClient := redis.NewClient(opts)
-
-	presenceRepository := repository.NewPresence(redisClient)
+	presenceRepository := repository.NewPresence(app.RedisClient)
 
 	presenceWriter = presenceRepository
 
-	presenceQueue, err := queue.NewPresence(queueConnection)
+	presenceQueue, err := queue.NewPresence(app.RabbitMQConnection)
 	panicOnError(err, "failed to initialize presence queue")
 
 	updatePresence = use_case.NewUpdatePresence(
@@ -115,7 +89,7 @@ func main() {
 	eng.GET("/messages", listMessagesHandler)
 	eng.GET("/ws/presence", presenceWSHandler)
 
-	eng.Run(fmt.Sprintf(":%d", env.HTTPPortNumber))
+	eng.Run(fmt.Sprintf(":%d", app.Env.HTTPPortNumber))
 }
 
 func wsHandler(c *gin.Context) {

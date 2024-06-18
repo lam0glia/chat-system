@@ -21,7 +21,7 @@ type Env struct {
 	UIDGeneratorStartTime string   `env:"UNIQUE_ID_GENERATOR_START_TIME" env-default:"2024-06-13"`
 }
 
-func NewEnv() (*Env, error) {
+func newEnv() (*Env, error) {
 	var env Env
 	err := cleanenv.ReadConfig(".env", &env)
 	if err != nil {
