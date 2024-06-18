@@ -2,14 +2,13 @@ package handler
 
 import (
 	"log"
-	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/lam0glia/chat-system/domain"
+	"github.com/lam0glia/chat-system/http/middleware"
 )
 
 type Presence struct {
@@ -20,11 +19,7 @@ type Presence struct {
 }
 
 func (h *Presence) WebSocket(c *gin.Context) {
-	from, err := strconv.ParseUint(c.Query("from"), 10, 64)
-	if err != nil {
-		c.AbortWithStatus(http.StatusBadRequest)
-		return
-	}
+	from := middleware.GetUserIDFromContext(c)
 
 	ctx := c.Request.Context()
 
@@ -42,6 +37,7 @@ func (h *Presence) WebSocket(c *gin.Context) {
 		}
 	}()
 
+	var err error
 	if err = h.updatePresence.Execute(ctx, &presence); err != nil {
 		abortWithInternalError(c, err)
 		return

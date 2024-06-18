@@ -4,7 +4,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lam0glia/chat-system/bootstrap"
 	"github.com/lam0glia/chat-system/http/handler"
+	"github.com/lam0glia/chat-system/http/middleware"
 )
+
+const v1Prefix = "/v1"
 
 func Setup(handler *handler.Handler, envName string) *gin.Engine {
 	if envName == bootstrap.ProductionEnvironmentName {
@@ -17,7 +20,7 @@ func Setup(handler *handler.Handler, envName string) *gin.Engine {
 
 	eng.SetTrustedProxies(nil)
 
-	v1 := eng.Group("/v1")
+	v1 := eng.Group(v1Prefix, middleware.NewUser)
 	{
 		chatRouter(v1, handler.Chat)
 		presenceRouter(v1, handler.Presence)

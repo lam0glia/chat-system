@@ -33,7 +33,6 @@ type SentMessageRequest struct {
 
 type ListMessageRequest struct {
 	BeforeID uint64 `form:"beforeId"`
-	From     uint64 `form:"from"`
 	To       uint64 `form:"to"`
 }
 
