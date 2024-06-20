@@ -12,11 +12,15 @@ import (
 
 const messageExchange = "messages"
 
-type message struct {
+type consumer struct {
 	ch *amqp.Channel
 }
 
-func (q *message) Publish(ctx context.Context, msg *domain.Message) error {
+type producer struct {
+	ch *amqp.Channel
+}
+
+func (q *producer) Publish(ctx context.Context, msg *domain.Message) error {
 	b, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to encode json: %w", err)
@@ -39,7 +43,7 @@ func (q *message) Publish(ctx context.Context, msg *domain.Message) error {
 	return nil
 }
 
-func (q *message) declareConsumer(userID uint64) (string, error) {
+func (q *consumer) declareConsumer(key string) (string, error) {
 	qDeclared, err := q.ch.QueueDeclare(
 		"",    // name
 		false, // durable
@@ -53,9 +57,9 @@ func (q *message) declareConsumer(userID uint64) (string, error) {
 	}
 
 	err = q.ch.QueueBind(
-		qDeclared.Name,            // queue name
-		fmt.Sprintf("%d", userID), // routing key
-		messageExchange,           // exchange
+		qDeclared.Name,  // queue name
+		key,             // routing key
+		messageExchange, // exchange
 		false,
 		nil,
 	)
@@ -66,13 +70,13 @@ func (q *message) declareConsumer(userID uint64) (string, error) {
 	return qDeclared.Name, nil
 }
 
-func (q *message) NewConsumer(ctx context.Context, userID uint64) (<-chan amqp.Delivery, error) {
-	name, err := q.declareConsumer(userID)
+func (q *consumer) NewConsumer(ctx context.Context, userID uint64) (<-chan amqp.Delivery, error) {
+	consumer := fmt.Sprintf("%d", userID)
+
+	name, err := q.declareConsumer(consumer)
 	if err != nil {
 		return nil, fmt.Errorf("declare consumer: %w", err)
 	}
-
-	consumer := fmt.Sprintf("%d", userID)
 
 	msgs, err := q.ch.ConsumeWithContext(ctx,
 		name,     // queue
@@ -92,13 +96,19 @@ func (q *message) NewConsumer(ctx context.Context, userID uint64) (<-chan amqp.D
 
 func NewMessage(
 	conn *amqp.Connection,
-) (*message, error) {
+) (*consumer, *producer, error) {
 	ch, err := conn.Channel()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return &message{
+	c := consumer{
 		ch: ch,
-	}, nil
+	}
+
+	p := producer{
+		ch: ch,
+	}
+
+	return &c, &p, nil
 }

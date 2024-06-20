@@ -46,8 +46,13 @@ func (w *messageWriter) Done() <-chan struct{} {
 	return w.done
 }
 
-func NewMessageWriter(conn *websocket.Conn, q domain.MessageQueue, userID uint64) (*messageWriter, error) {
-	d, err := q.NewConsumer(context.TODO(), userID)
+func NewMessageWriter(
+	ctx context.Context,
+	conn *websocket.Conn,
+	consumer domain.MessageQueueConsumer,
+	userID uint64,
+) (*messageWriter, error) {
+	d, err := consumer.NewConsumer(ctx, userID)
 	if err != nil {
 		return nil, err
 	}

@@ -48,7 +48,10 @@ type SendMessageUseCase interface {
 	Execute(ctx context.Context, message *SentMessageRequest) error
 }
 
-type MessageQueue interface {
+type MessageQueueProducer interface {
 	Publish(ctx context.Context, msg *Message) error
+}
+
+type MessageQueueConsumer interface {
 	NewConsumer(ctx context.Context, userID uint64) (<-chan amqp.Delivery, error)
 }

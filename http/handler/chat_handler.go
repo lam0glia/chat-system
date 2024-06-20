@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -14,24 +13,27 @@ import (
 	"github.com/lam0glia/chat-system/domain"
 	"github.com/lam0glia/chat-system/http/middleware"
 	"github.com/lam0glia/chat-system/queue"
+	"github.com/lam0glia/chat-system/use_case"
 	"github.com/lam0glia/chat-system/worker"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type Chat struct {
-	queueConn          *amqp.Connection
-	upgrader           websocket.Upgrader
-	sendMessageUseCase domain.SendMessageUseCase
-	messageReader      domain.MessageReader
+	queueConn     *amqp.Connection
+	upgrader      websocket.Upgrader
+	messageReader domain.MessageReader
+	messageWriter domain.MessageWriter
+	uidGenerator  domain.UIDGenerator
 }
 
 type chatWS struct {
-	conn         *websocket.Conn
-	stop         chan struct{}
-	userID       uint64
-	wg           sync.WaitGroup
-	messageQueue domain.MessageQueue
-	writerWorker worker.Worker
+	ctx                context.Context
+	conn               *websocket.Conn
+	stop               chan struct{}
+	userID             uint64
+	wg                 sync.WaitGroup
+	writerWorker       worker.Worker
+	sendMessageUseCase domain.SendMessageUseCase
 }
 
 func (h *Chat) WebSocket(c *gin.Context) {
@@ -43,17 +45,42 @@ func (h *Chat) WebSocket(c *gin.Context) {
 		return
 	}
 
+	defer conn.Close()
+
+	consumer, producer, err := queue.NewMessage(h.queueConn)
+	if err != nil {
+		abortWithInternalError(c, err)
+		return
+	}
+
 	ctx := c.Request.Context()
 
-	ws, err := newChatWS(conn, h.queueConn, from)
+	writer, err := worker.NewMessageWriter(ctx, conn, consumer, from)
 	if err != nil {
-		conn.Close()
+		abortWithInternalError(c, err)
+		return
+	}
+
+	sendMessageUseCase := use_case.NewSendMessage(
+		h.messageWriter,
+		producer,
+		h.uidGenerator,
+	)
+
+	ws, err := newChatWS(
+		ctx,
+		conn,
+		from,
+		writer,
+		sendMessageUseCase,
+	)
+	if err != nil {
 		abortWithInternalError(c, err)
 		return
 	}
 
 	ws.wg.Add(1)
-	go ws.read(ctx, h.sendMessageUseCase)
+	go ws.read()
 
 	ws.wg.Add(1)
 	go ws.write()
@@ -69,7 +96,7 @@ func (ws *chatWS) write() {
 	<-ws.writerWorker.Done()
 }
 
-func (ws *chatWS) read(ctx context.Context, uc domain.SendMessageUseCase) {
+func (ws *chatWS) read() {
 	defer func() {
 		ws.conn.Close()
 		close(ws.stop)
@@ -92,7 +119,7 @@ func (ws *chatWS) read(ctx context.Context, uc domain.SendMessageUseCase) {
 
 		if err := json.NewDecoder(r).Decode(&message); err != nil {
 			log.Printf("err: decode json: %s", err)
-		} else if err = uc.Execute(ctx, &message); err != nil {
+		} else if err = ws.sendMessageUseCase.Execute(ws.ctx, &message); err != nil {
 			log.Printf("err: send message: %s", err)
 			break
 		}
@@ -128,33 +155,27 @@ func (ws *chatWS) done(name string) {
 }
 
 func newChatWS(
+	ctx context.Context,
 	conn *websocket.Conn,
-	queueConn *amqp.Connection,
 	userID uint64,
+	writerWorker worker.Worker,
+	sendMessageUseCase domain.SendMessageUseCase,
 ) (*chatWS, error) {
-	q, err := queue.NewMessage(queueConn)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize message queues: %w", err)
-	}
-
-	writer, err := worker.NewMessageWriter(conn, q, userID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create writer worker: %w", err)
-	}
-
 	return &chatWS{
-		conn:         conn,
-		stop:         make(chan struct{}),
-		userID:       userID,
-		messageQueue: q,
-		writerWorker: writer,
+		ctx:                ctx,
+		conn:               conn,
+		stop:               make(chan struct{}),
+		userID:             userID,
+		writerWorker:       writerWorker,
+		sendMessageUseCase: sendMessageUseCase,
 	}, nil
 }
 
 func NewChat(
-	sendMessageUseCase domain.SendMessageUseCase,
 	messageReader domain.MessageReader,
 	queueConn *amqp.Connection,
+	uidGenerator domain.UIDGenerator,
+	messageWriter domain.MessageWriter,
 ) *Chat {
 	return &Chat{
 		upgrader: websocket.Upgrader{
@@ -163,8 +184,9 @@ func NewChat(
 			Error:            nil,
 			HandshakeTimeout: 10 * time.Second,
 		},
-		sendMessageUseCase: sendMessageUseCase,
-		messageReader:      messageReader,
-		queueConn:          queueConn,
+		messageReader: messageReader,
+		queueConn:     queueConn,
+		uidGenerator:  uidGenerator,
+		messageWriter: messageWriter,
 	}
 }

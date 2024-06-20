@@ -36,17 +36,11 @@ func init() {
 	messageRepo := repository.NewMessage(app.CassandraSession)
 	presenceRepository := repository.NewPresence(app.RedisClient)
 
-	messageQueue, err := queue.NewMessage(app.RabbitMQConnection)
 	panicOnError(err, "Failed to initialize message queue")
 
 	presenceQueue, err := queue.NewPresence(app.RabbitMQConnection)
 	panicOnError(err, "failed to initialize presence queue")
 
-	sendMessageUseCase := use_case.NewSendMessage(
-		messageRepo,
-		messageQueue,
-		uidGenerator,
-	)
 	updatePresenceUseCase := use_case.NewUpdatePresence(
 		presenceRepository,
 		presenceRepository,
@@ -54,9 +48,10 @@ func init() {
 	)
 
 	chatHandler := handler.NewChat(
-		sendMessageUseCase,
 		messageRepo,
 		app.RabbitMQConnection,
+		uidGenerator,
+		messageRepo,
 	)
 	presenceHandler := handler.NewPresence(
 		updatePresenceUseCase,
