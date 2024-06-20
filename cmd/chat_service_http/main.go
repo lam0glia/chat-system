@@ -55,8 +55,8 @@ func init() {
 
 	chatHandler := handler.NewChat(
 		sendMessageUseCase,
-		messageQueue,
 		messageRepo,
+		app.RabbitMQConnection,
 	)
 	presenceHandler := handler.NewPresence(
 		updatePresenceUseCase,

@@ -30,7 +30,7 @@ func (uc *sendMessage) Execute(ctx context.Context, messageRequest *domain.SentM
 		return fmt.Errorf("failed to insert message: %w", err)
 	}
 
-	if err = uc.messageQueue.Send(ctx, message); err != nil {
+	if err = uc.messageQueue.Publish(ctx, message); err != nil {
 		return fmt.Errorf("faield to send message to queue: %w", err)
 	}
 

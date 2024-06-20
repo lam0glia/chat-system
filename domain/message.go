@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/gorilla/websocket"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type Message struct {
@@ -49,7 +49,6 @@ type SendMessageUseCase interface {
 }
 
 type MessageQueue interface {
-	NewUserQueue(userID uint64) error
-	Send(ctx context.Context, msg *Message) error
-	Consume(userID uint64, conn *websocket.Conn, close chan bool) error
+	Publish(ctx context.Context, msg *Message) error
+	NewConsumer(ctx context.Context, userID uint64) (<-chan amqp.Delivery, error)
 }

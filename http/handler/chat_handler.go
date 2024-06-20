@@ -3,21 +3,35 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/lam0glia/chat-system/domain"
 	"github.com/lam0glia/chat-system/http/middleware"
+	"github.com/lam0glia/chat-system/queue"
+	"github.com/lam0glia/chat-system/worker"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type Chat struct {
+	queueConn          *amqp.Connection
 	upgrader           websocket.Upgrader
 	sendMessageUseCase domain.SendMessageUseCase
-	messageQueue       domain.MessageQueue
 	messageReader      domain.MessageReader
+}
+
+type chatWS struct {
+	conn         *websocket.Conn
+	stop         chan struct{}
+	userID       uint64
+	wg           sync.WaitGroup
+	messageQueue domain.MessageQueue
+	writerWorker worker.Worker
 }
 
 func (h *Chat) WebSocket(c *gin.Context) {
@@ -29,54 +43,60 @@ func (h *Chat) WebSocket(c *gin.Context) {
 		return
 	}
 
-	defer conn.Close()
-
 	ctx := c.Request.Context()
-	close := make(chan bool, 1)
 
-	var wg sync.WaitGroup
+	ws, err := newChatWS(conn, h.queueConn, from)
+	if err != nil {
+		conn.Close()
+		abortWithInternalError(c, err)
+		return
+	}
 
-	wg.Add(1)
-	go func(ctx context.Context, close chan bool) {
-		defer func() {
-			close <- true
-		}()
+	ws.wg.Add(1)
+	go ws.read(ctx, h.sendMessageUseCase)
 
-		defer wg.Done()
+	ws.wg.Add(1)
+	go ws.write()
 
-		for {
-			_, r, err := conn.NextReader()
-			if err != nil {
-				if _, is := err.(*websocket.CloseError); !is {
-					log.Printf("read message from peer returned an error: %s", err)
-				}
+	ws.wg.Wait()
+}
 
-				break
-			}
+func (ws *chatWS) write() {
+	defer ws.done("write")
 
-			message := domain.SentMessageRequest{
-				From: from,
-			}
+	ws.writerWorker.Run()
 
-			if err = json.NewDecoder(r).Decode(&message); err != nil {
-				log.Printf("failed to decode message: %s", err)
-			} else if err = h.sendMessageUseCase.Execute(ctx, &message); err != nil {
-				log.Printf("failed to send message: %s", err)
-			}
-		}
-	}(ctx, close)
+	<-ws.writerWorker.Done()
+}
 
-	wg.Add(1)
-	go func(close chan bool) {
-		defer wg.Done()
+func (ws *chatWS) read(ctx context.Context, uc domain.SendMessageUseCase) {
+	defer func() {
+		ws.conn.Close()
+		close(ws.stop)
+		ws.done("read")
+	}()
 
-		err := h.messageQueue.Consume(from, conn, close)
+	for {
+		_, r, err := ws.conn.NextReader()
 		if err != nil {
-			log.Println("Failed to consume messages: ", err.Error())
-		}
-	}(close)
+			if _, is := err.(*websocket.CloseError); !is {
+				log.Printf("err: read peer: %s", err)
+			}
 
-	wg.Wait()
+			break
+		}
+
+		message := domain.SentMessageRequest{
+			From: ws.userID,
+		}
+
+		if err := json.NewDecoder(r).Decode(&message); err != nil {
+			log.Printf("err: decode json: %s", err)
+		} else if err = uc.Execute(ctx, &message); err != nil {
+			log.Printf("err: send message: %s", err)
+			break
+		}
+	}
 }
 
 func (h *Chat) ListMessages(c *gin.Context) {
@@ -102,18 +122,49 @@ func (h *Chat) ListMessages(c *gin.Context) {
 	c.JSON(http.StatusOK, messages)
 }
 
+func (ws *chatWS) done(name string) {
+	log.Printf("Closed %s goroutine", name)
+	ws.wg.Done()
+}
+
+func newChatWS(
+	conn *websocket.Conn,
+	queueConn *amqp.Connection,
+	userID uint64,
+) (*chatWS, error) {
+	q, err := queue.NewMessage(queueConn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize message queues: %w", err)
+	}
+
+	writer, err := worker.NewMessageWriter(conn, q, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create writer worker: %w", err)
+	}
+
+	return &chatWS{
+		conn:         conn,
+		stop:         make(chan struct{}),
+		userID:       userID,
+		messageQueue: q,
+		writerWorker: writer,
+	}, nil
+}
+
 func NewChat(
 	sendMessageUseCase domain.SendMessageUseCase,
-	messageQueue domain.MessageQueue,
 	messageReader domain.MessageReader,
+	queueConn *amqp.Connection,
 ) *Chat {
 	return &Chat{
 		upgrader: websocket.Upgrader{
-			ReadBufferSize:  5120,
-			WriteBufferSize: 5120,
+			ReadBufferSize:   5120,
+			WriteBufferSize:  5120,
+			Error:            nil,
+			HandshakeTimeout: 10 * time.Second,
 		},
 		sendMessageUseCase: sendMessageUseCase,
-		messageQueue:       messageQueue,
 		messageReader:      messageReader,
+		queueConn:          queueConn,
 	}
 }
