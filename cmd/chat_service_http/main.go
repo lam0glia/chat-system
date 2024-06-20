@@ -1,8 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/lam0glia/chat-system/bootstrap"
@@ -36,8 +43,6 @@ func init() {
 	messageRepo := repository.NewMessage(app.CassandraSession)
 	presenceRepository := repository.NewPresence(app.RedisClient)
 
-	panicOnError(err, "Failed to initialize message queue")
-
 	presenceQueue, err := queue.NewPresence(app.RabbitMQConnection)
 	panicOnError(err, "failed to initialize presence queue")
 
@@ -68,9 +73,44 @@ func init() {
 }
 
 func main() {
-	eng := route.Setup(h, env.EnvironmentName)
+	ctx, cancel := signal.NotifyContext(context.Background(),
+		os.Interrupt, syscall.SIGTERM)
 
-	eng.Run(fmt.Sprintf(":%d", env.HTTPPortNumber))
+	defer cancel()
+
+	handler := route.Setup(h, env.EnvironmentName)
+
+	server := &http.Server{
+		Addr:    fmt.Sprintf(":%d", env.HTTPPortNumber),
+		Handler: handler,
+		BaseContext: func(l net.Listener) context.Context {
+			return ctx
+		},
+	}
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		if err := server.ListenAndServe(); err != http.ErrServerClosed {
+			log.Fatalf("err: serve http: %s", err.Error())
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		<-ctx.Done()
+
+		log.Println("Shutting down http server...")
+		// todo: "Shutdown does not attempt to close nor wait for hijacked connections such as WebSockets"
+		server.Shutdown(context.Background())
+	}()
+
+	wg.Wait()
 }
 
 func panicOnError(err error, msg string) {
