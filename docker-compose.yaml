@@ -1,0 +1,34 @@
+services:
+  cassandra:
+    image: cassandra:latest
+    container_name: cassandra-chat
+    volumes:
+      - ./init/cassandra/init.cql:/docker-entrypoint-initdb.d/init.cql
+    ports:
+      - "9042:9042"
+    networks:
+      - chat
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis-chat
+    ports:
+      - "6379:6379"
+    networks:
+      - chat
+
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: rabbitmq-chat
+    volumes:
+      - ./init/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./init/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - chat
+
+networks:
+  chat:
+    driver: bridge
