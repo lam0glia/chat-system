@@ -60,4 +60,5 @@ type MessageQueueProducer interface {
 
 type MessageQueueConsumer interface {
 	NewConsumer(ctx context.Context, userID uint64) (<-chan amqp.Delivery, error)
+	Close()
 }

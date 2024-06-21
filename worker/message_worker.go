@@ -12,12 +12,10 @@ import (
 
 type Worker interface {
 	Run()
-	Done() <-chan struct{}
 }
 
 type messageWriter struct {
 	conn     *websocket.Conn
-	done     chan struct{}
 	delivery <-chan amqp.Delivery
 }
 
@@ -38,12 +36,6 @@ func (w *messageWriter) Run() {
 
 		d.Ack(false)
 	}
-
-	w.done <- struct{}{}
-}
-
-func (w *messageWriter) Done() <-chan struct{} {
-	return w.done
 }
 
 func NewMessageWriter(
@@ -59,7 +51,6 @@ func NewMessageWriter(
 
 	return &messageWriter{
 		conn:     conn,
-		done:     make(chan struct{}),
 		delivery: d,
 	}, nil
 }

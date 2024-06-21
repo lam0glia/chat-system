@@ -16,6 +16,10 @@ type consumer struct {
 	ch *amqp.Channel
 }
 
+func (q *consumer) Close() {
+	q.ch.Close()
+}
+
 type producer struct {
 	ch *amqp.Channel
 }

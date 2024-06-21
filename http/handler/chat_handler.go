@@ -27,31 +27,28 @@ type Chat struct {
 }
 
 type chatWS struct {
-	ctx                context.Context
 	conn               *websocket.Conn
-	stop               chan struct{}
 	userID             uint64
 	wg                 sync.WaitGroup
-	writerWorker       worker.Worker
 	sendMessageUseCase domain.SendMessageUseCase
 }
 
 func (h *Chat) WebSocket(c *gin.Context) {
 	from := middleware.GetUserIDFromContext(c)
 
-	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
-	if err != nil {
-		abortWithInternalError(c, err)
-		return
-	}
-
-	defer conn.Close()
-
 	consumer, producer, err := queue.NewMessage(h.queueConn)
 	if err != nil {
 		abortWithInternalError(c, err)
 		return
 	}
+
+	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		log.Printf("err: %s", err)
+		return
+	}
+
+	defer conn.Close()
 
 	ctx := c.Request.Context()
 
@@ -67,39 +64,31 @@ func (h *Chat) WebSocket(c *gin.Context) {
 		h.uidGenerator,
 	)
 
-	ws, err := newChatWS(
-		ctx,
-		conn,
-		from,
-		writer,
-		sendMessageUseCase,
-	)
-	if err != nil {
-		abortWithInternalError(c, err)
-		return
-	}
+	ws := newChatWS(conn, from, sendMessageUseCase)
 
 	ws.wg.Add(1)
-	go ws.read()
+	go ws.read(ctx, consumer)
 
 	ws.wg.Add(1)
-	go ws.write()
+	go ws.write(writer)
 
 	ws.wg.Wait()
 }
 
-func (ws *chatWS) write() {
+func (ws *chatWS) write(w worker.Worker) {
 	defer ws.done("write")
 
-	ws.writerWorker.Run()
-
-	<-ws.writerWorker.Done()
+	w.Run()
 }
 
-func (ws *chatWS) read() {
+func (ws *chatWS) read(
+	ctx context.Context,
+	consumer domain.MessageQueueConsumer,
+) {
 	defer func() {
+		// close the writer worker channel
+		consumer.Close()
 		ws.conn.Close()
-		close(ws.stop)
 		ws.done("read")
 	}()
 
@@ -119,9 +108,8 @@ func (ws *chatWS) read() {
 
 		if err := json.NewDecoder(r).Decode(&message); err != nil {
 			log.Printf("err: decode json: %s", err)
-		} else if err = ws.sendMessageUseCase.Execute(ws.ctx, &message); err != nil {
+		} else if err = ws.sendMessageUseCase.Execute(ctx, &message); err != nil {
 			log.Printf("err: send message: %s", err)
-			break
 		}
 	}
 }
@@ -155,20 +143,15 @@ func (ws *chatWS) done(name string) {
 }
 
 func newChatWS(
-	ctx context.Context,
 	conn *websocket.Conn,
 	userID uint64,
-	writerWorker worker.Worker,
 	sendMessageUseCase domain.SendMessageUseCase,
-) (*chatWS, error) {
+) *chatWS {
 	return &chatWS{
-		ctx:                ctx,
 		conn:               conn,
-		stop:               make(chan struct{}),
 		userID:             userID,
-		writerWorker:       writerWorker,
 		sendMessageUseCase: sendMessageUseCase,
-	}, nil
+	}
 }
 
 func NewChat(
