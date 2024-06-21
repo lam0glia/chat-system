@@ -8,7 +8,7 @@ import (
 	"github.com/lam0glia/chat-system/domain"
 )
 
-const pairFormat = "%d%d"
+const pairFormat = "%d.%d"
 
 type message struct {
 	db *gocql.Session
@@ -23,7 +23,6 @@ func (r *message) pair(fromID, toID uint64) string {
 }
 
 func (r *message) Insert(ctx context.Context, message *domain.Message) error {
-
 	return r.db.Query(
 		"INSERT INTO messages (id, content, from_id, to_id, created_at, pair) VALUES (?, ?, ?, ?, ?, ?)",
 		message.ID,
@@ -35,19 +34,40 @@ func (r *message) Insert(ctx context.Context, message *domain.Message) error {
 	).WithContext(ctx).Exec()
 }
 
-func (r *message) List(ctx context.Context, fromID, toID, beforeID uint64, limit int) ([]domain.Message, error) {
-	scanner := r.db.Query(
-		`SELECT
+func (r *message) List(
+	ctx context.Context,
+	fromID,
+	toID uint64,
+	beforeID *uint64,
+	limit int,
+) ([]domain.Message, error) {
+	query := `SELECT
 			id, content, created_at, from_id, to_id
 		FROM
 			messages
 		WHERE
 			pair = ?
-			AND id < ?
-		ORDER BY id DESC LIMIT ?;`,
-		r.pair(fromID, toID),
-		beforeID,
-		limit,
+			%s
+		ORDER BY id ASC LIMIT ?`
+
+	var values []any
+
+	values = append(values, r.pair(fromID, toID))
+
+	var beforeCondition string
+
+	if beforeID != nil {
+		beforeCondition = "AND id < ?"
+		values = append(values, beforeID)
+	}
+
+	values = append(values, limit)
+
+	query = fmt.Sprintf(query, beforeCondition)
+
+	scanner := r.db.Query(
+		query,
+		values...,
 	).WithContext(ctx).Iter().Scanner()
 
 	var (

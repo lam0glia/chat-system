@@ -32,8 +32,8 @@ type SentMessageRequest struct {
 }
 
 type ListMessageRequest struct {
-	BeforeID uint64 `form:"beforeId"`
-	To       uint64 `form:"to"`
+	BeforeID *uint64 `form:"beforeId"`
+	To       uint64  `form:"to" binding:"required"`
 }
 
 type MessageWriter interface {
@@ -41,7 +41,13 @@ type MessageWriter interface {
 }
 
 type MessageReader interface {
-	List(ctx context.Context, fromID, toID, beforeID uint64, limit int) ([]Message, error)
+	List(
+		ctx context.Context,
+		fromID,
+		toID uint64,
+		beforeID *uint64,
+		limit int,
+	) ([]Message, error)
 }
 
 type SendMessageUseCase interface {

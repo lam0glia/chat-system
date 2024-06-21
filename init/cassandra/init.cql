@@ -10,4 +10,4 @@ CREATE TABLE messages (
     to_id bigint,
     pair varchar,
     PRIMARY KEY ((pair), id)
-) WITH CLUSTERING ORDER BY (id DESC);
+) WITH CLUSTERING ORDER BY (id ASC);
