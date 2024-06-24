@@ -54,10 +54,10 @@ A identificação de presença é feita automaticamente por pings e pongs. Entã
   GET /v1/presence/ws
 ```
 
-#### Conexão websocket para envio e recebimento de mensagens
+#### Obter mensagens de uma conversa
 
 ```http
-  GET v1/chat/ws
+  GET v1/chat/messages
 ```
 
 | Corpo (JSON)   | Tipo       | Descrição                           |
