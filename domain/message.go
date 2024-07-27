@@ -3,8 +3,6 @@ package domain
 import (
 	"context"
 	"time"
-
-	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type Message struct {
@@ -59,6 +57,5 @@ type MessageQueueProducer interface {
 }
 
 type MessageQueueConsumer interface {
-	NewConsumer(ctx context.Context, userID uint64) (<-chan amqp.Delivery, error)
-	Close()
+	Consume(ctx context.Context, userID uint64, write chan *Message) error
 }

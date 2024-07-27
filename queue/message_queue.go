@@ -12,19 +12,11 @@ import (
 
 const messageExchange = "messages"
 
-type consumer struct {
+type message struct {
 	ch *amqp.Channel
 }
 
-func (q *consumer) Close() {
-	q.ch.Close()
-}
-
-type producer struct {
-	ch *amqp.Channel
-}
-
-func (q *producer) Publish(ctx context.Context, msg *domain.Message) error {
+func (q *message) Publish(ctx context.Context, msg *domain.Message) error {
 	b, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to encode json: %w", err)
@@ -47,7 +39,7 @@ func (q *producer) Publish(ctx context.Context, msg *domain.Message) error {
 	return nil
 }
 
-func (q *consumer) declareConsumer(key string) (string, error) {
+func (q *message) declareConsumer(key string) (string, error) {
 	qDeclared, err := q.ch.QueueDeclare(
 		"",    // name
 		false, // durable
@@ -74,12 +66,12 @@ func (q *consumer) declareConsumer(key string) (string, error) {
 	return qDeclared.Name, nil
 }
 
-func (q *consumer) NewConsumer(ctx context.Context, userID uint64) (<-chan amqp.Delivery, error) {
+func (q *message) Consume(ctx context.Context, userID uint64, write chan *domain.Message) error {
 	consumer := fmt.Sprintf("%d", userID)
 
 	name, err := q.declareConsumer(consumer)
 	if err != nil {
-		return nil, fmt.Errorf("declare consumer: %w", err)
+		return fmt.Errorf("declare consumer: %w", err)
 	}
 
 	msgs, err := q.ch.ConsumeWithContext(ctx,
@@ -92,27 +84,38 @@ func (q *consumer) NewConsumer(ctx context.Context, userID uint64) (<-chan amqp.
 		nil,      // args
 	)
 	if err != nil {
-		return nil, fmt.Errorf("consume: %w", err)
+		return fmt.Errorf("consume: %w", err)
 	}
 
-	return msgs, nil
+	for d := range msgs {
+		var msg domain.Message
+
+		err = json.Unmarshal(d.Body, &msg)
+		if err != nil {
+			err = fmt.Errorf("json decode: %w", err)
+			break
+		}
+
+		write <- &msg
+
+		if err = d.Ack(false); err != nil {
+			err = fmt.Errorf("ack: %w", err)
+			break
+		}
+	}
+
+	return err
 }
 
 func NewMessage(
 	conn *amqp.Connection,
-) (*consumer, *producer, error) {
+) (*message, error) {
 	ch, err := conn.Channel()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	c := consumer{
+	return &message{
 		ch: ch,
-	}
-
-	p := producer{
-		ch: ch,
-	}
-
-	return &c, &p, nil
+	}, nil
 }
