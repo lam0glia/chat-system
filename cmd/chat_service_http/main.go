@@ -10,66 +10,20 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/lam0glia/chat-system/bootstrap"
-	"github.com/lam0glia/chat-system/http/handler"
 	"github.com/lam0glia/chat-system/http/route"
-	"github.com/lam0glia/chat-system/queue"
-	"github.com/lam0glia/chat-system/repository"
-	"github.com/lam0glia/chat-system/use_case"
-	"github.com/sony/sonyflake"
 )
 
-var (
-	h   *handler.Handler
-	env *bootstrap.Env
-)
+var app *bootstrap.App
 
 func init() {
-	app, err := bootstrap.NewApp()
-	panicOnError(err, "Failed to bootstrap app")
+	var err error
 
-	start, err := time.Parse("2006-01-02", app.Env.UIDGeneratorStartTime)
-	panicOnError(err, "Failed to parse start time")
-
-	settings := sonyflake.Settings{
-		StartTime: start,
+	app, err = bootstrap.NewApp()
+	if err != nil {
+		log.Panicf("Failed to bootstrap app: %s", err)
 	}
-
-	uidGenerator, err := sonyflake.New(settings)
-	panicOnError(err, "Failed to configure sonyflake")
-
-	messageRepo := repository.NewMessage(app.CassandraSession)
-	presenceRepository := repository.NewPresence(app.RedisClient)
-
-	presenceQueue, err := queue.NewPresence(app.RabbitMQConnection)
-	panicOnError(err, "failed to initialize presence queue")
-
-	updatePresenceUseCase := use_case.NewUpdatePresence(
-		presenceRepository,
-		presenceRepository,
-		presenceQueue,
-	)
-
-	chatHandler := handler.NewChat(
-		messageRepo,
-		app.RabbitMQConnection,
-		uidGenerator,
-		messageRepo,
-	)
-	presenceHandler := handler.NewPresence(
-		updatePresenceUseCase,
-		presenceRepository,
-		presenceQueue,
-	)
-
-	h = handler.NewHandler(
-		chatHandler,
-		presenceHandler,
-	)
-
-	env = app.Env
 }
 
 func main() {
@@ -78,10 +32,10 @@ func main() {
 
 	defer cancel()
 
-	handler := route.Setup(h, env.EnvironmentName)
+	handler := route.Setup(app)
 
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", env.HTTPPortNumber),
+		Addr:    fmt.Sprintf(":%d", app.Env.HTTPPortNumber),
 		Handler: handler,
 		BaseContext: func(l net.Listener) context.Context {
 			return ctx
@@ -111,10 +65,4 @@ func main() {
 	}()
 
 	wg.Wait()
-}
-
-func panicOnError(err error, msg string) {
-	if err != nil {
-		log.Panicf("%s: %s", msg, err)
-	}
 }

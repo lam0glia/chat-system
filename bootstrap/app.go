@@ -6,6 +6,7 @@ import (
 	"github.com/gocql/gocql"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
+	"github.com/sony/sonyflake"
 )
 
 type App struct {
@@ -13,6 +14,7 @@ type App struct {
 	CassandraSession   *gocql.Session
 	RabbitMQConnection *amqp.Connection
 	RedisClient        *redis.Client
+	SonyFlake          *sonyflake.Sonyflake
 }
 
 func NewApp() (*App, error) {
@@ -39,6 +41,11 @@ func NewApp() (*App, error) {
 	app.RedisClient, err = newRedis(app.Env.RedisURL)
 	if err != nil {
 		return nil, fmt.Errorf("create redis connection: %w", err)
+	}
+
+	app.SonyFlake, err = newUIDGenerator(app.Env.UIDGeneratorStartTime)
+	if err != nil {
+		return nil, fmt.Errorf("new uid generator: %w", err)
 	}
 
 	return &app, nil

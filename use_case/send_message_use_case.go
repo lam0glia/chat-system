@@ -8,9 +8,8 @@ import (
 )
 
 type sendMessage struct {
-	messageWriter domain.MessageWriter
-	messageQueue  domain.MessageQueueProducer
-	uidGenerator  domain.UIDGenerator
+	messageQueue domain.MessageQueueProducer
+	uidGenerator domain.UIDGenerator
 }
 
 func (uc *sendMessage) Execute(ctx context.Context, messageRequest *domain.SentMessageRequest) error {
@@ -26,10 +25,6 @@ func (uc *sendMessage) Execute(ctx context.Context, messageRequest *domain.SentM
 		messageRequest.Content,
 	)
 
-	if err = uc.messageWriter.Insert(ctx, message); err != nil {
-		return fmt.Errorf("failed to insert message: %w", err)
-	}
-
 	if err = uc.messageQueue.Publish(ctx, message); err != nil {
 		return fmt.Errorf("faield to send message to queue: %w", err)
 	}
@@ -38,13 +33,11 @@ func (uc *sendMessage) Execute(ctx context.Context, messageRequest *domain.SentM
 }
 
 func NewSendMessage(
-	messageWriter domain.MessageWriter,
 	messageQueue domain.MessageQueueProducer,
 	uidGenerator domain.UIDGenerator,
 ) *sendMessage {
 	return &sendMessage{
-		messageWriter: messageWriter,
-		messageQueue:  messageQueue,
-		uidGenerator:  uidGenerator,
+		messageQueue: messageQueue,
+		uidGenerator: uidGenerator,
 	}
 }
