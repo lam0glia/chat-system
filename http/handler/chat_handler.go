@@ -55,7 +55,7 @@ func (h *Chat) WebSocket(c *gin.Context) {
 	go ws.ping(ctx)
 
 	<-connClosed
-	// when the request end, the request context is canceled and
+	// when the request ends, the request context is canceled and
 	// the write and ping goroutines are finished
 }
 
@@ -97,4 +97,9 @@ func NewChat(
 		uidGenerator:  uidGenerator,
 		messageWriter: messageWriter,
 	}
+}
+
+func abortWithInternalError(c *gin.Context, err error) {
+	log.Println(err)
+	c.AbortWithStatus(http.StatusInternalServerError)
 }
