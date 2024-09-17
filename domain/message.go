@@ -52,10 +52,10 @@ type SendMessageUseCase interface {
 	Execute(ctx context.Context, message *SentMessageRequest) error
 }
 
-type MessageQueueProducer interface {
-	Publish(ctx context.Context, msg *Message) error
+type MessageEventProducer interface {
+	PublishMessage(*Message) error
 }
 
-type MessageQueueConsumer interface {
-	Consume(ctx context.Context, userID uint64, write chan *Message) error
+type MessageEventConsumer interface {
+	ConsumeMessages(ctx context.Context) error
 }

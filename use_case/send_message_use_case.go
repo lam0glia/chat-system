@@ -8,14 +8,14 @@ import (
 )
 
 type sendMessage struct {
-	messageQueue domain.MessageQueueProducer
-	uidGenerator domain.UIDGenerator
+	messageEventProducer domain.MessageEventProducer
+	uidGenerator         domain.UIDGenerator
 }
 
 func (uc *sendMessage) Execute(ctx context.Context, messageRequest *domain.SentMessageRequest) error {
 	id, err := uc.uidGenerator.NextID()
 	if err != nil {
-		return fmt.Errorf("failed to generate a new unique id: %w", err)
+		return fmt.Errorf("generate new unique id: %w", err)
 	}
 
 	message := domain.NewMessage(
@@ -25,19 +25,19 @@ func (uc *sendMessage) Execute(ctx context.Context, messageRequest *domain.SentM
 		messageRequest.Content,
 	)
 
-	if err = uc.messageQueue.Publish(ctx, message); err != nil {
-		return fmt.Errorf("faield to send message to queue: %w", err)
+	if err = uc.messageEventProducer.PublishMessage(message); err != nil {
+		return fmt.Errorf("publish event: %w", err)
 	}
 
 	return nil
 }
 
 func NewSendMessage(
-	messageQueue domain.MessageQueueProducer,
+	producer domain.MessageEventProducer,
 	uidGenerator domain.UIDGenerator,
 ) *sendMessage {
 	return &sendMessage{
-		messageQueue: messageQueue,
-		uidGenerator: uidGenerator,
+		messageEventProducer: producer,
+		uidGenerator:         uidGenerator,
 	}
 }

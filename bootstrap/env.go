@@ -19,6 +19,7 @@ type Env struct {
 	RabbitMQURL           string   `env:"RABBITMQ_URL" env-required:"true"`
 	RedisURL              string   `env:"REDIS_URL" env-required:"true"`
 	UIDGeneratorStartTime string   `env:"UNIQUE_ID_GENERATOR_START_TIME" env-default:"2024-06-13"`
+	MachineID             uint16   `env:"MACHINE_ID" env-required:"true"`
 }
 
 func newEnv() (*Env, error) {

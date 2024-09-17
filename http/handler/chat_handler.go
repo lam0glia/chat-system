@@ -25,18 +25,20 @@ type Chat struct {
 func (h *Chat) WebSocket(c *gin.Context) {
 	from := middleware.GetUserIDFromContext(c)
 
-	q, err := queue.NewMessage(h.queueConn)
+	q, err := queue.NewChat(h.queueConn, from)
 	if err != nil {
 		abortWithInternalError(c, err)
 		return
 	}
+
+	defer q.Close()
 
 	sendMessageUseCase := use_case.NewSendMessage(
 		q,
 		h.uidGenerator,
 	)
 
-	ws, err := newChatWS(c, h.upgrader, from, sendMessageUseCase)
+	ws, err := newChatWS(c, h.upgrader, from, sendMessageUseCase, q)
 	if err != nil {
 		log.Printf("err: upgrade: %s", err)
 		return

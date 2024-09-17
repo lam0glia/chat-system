@@ -43,7 +43,10 @@ func NewApp() (*App, error) {
 		return nil, fmt.Errorf("create redis connection: %w", err)
 	}
 
-	app.SonyFlake, err = newUIDGenerator(app.Env.UIDGeneratorStartTime)
+	app.SonyFlake, err = newUIDGenerator(
+		app.Env.UIDGeneratorStartTime,
+		app.Env.MachineID,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("new uid generator: %w", err)
 	}

@@ -3,12 +3,14 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/lam0glia/chat-system/domain"
+	"github.com/lam0glia/chat-system/queue"
 )
 
 const (
@@ -21,6 +23,7 @@ type chatWS struct {
 	userID             uint64
 	sendMessageUseCase domain.SendMessageUseCase
 	pingTicker         *time.Ticker
+	consumer           *queue.Chat
 }
 
 func newChatWS(
@@ -28,10 +31,11 @@ func newChatWS(
 	upgrader websocket.Upgrader,
 	userID uint64,
 	sendMessageUseCase domain.SendMessageUseCase,
+	consumer *queue.Chat,
 ) (*chatWS, error) {
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upgrade http connection: %w", err)
 	}
 
 	ticker := time.NewTicker(pingTickerDuration)
@@ -57,6 +61,7 @@ func newChatWS(
 		userID:             userID,
 		sendMessageUseCase: sendMessageUseCase,
 		pingTicker:         ticker,
+		consumer:           consumer,
 	}, nil
 }
 
@@ -94,7 +99,19 @@ func (ws *chatWS) read(
 }
 
 func (ws *chatWS) write(ctx context.Context) {
-	defer ws.logGoroutineDone("Write")
+	defer func() {
+		ws.logGoroutineDone("Write")
+		ws.consumer.Close()
+	}()
+
+	go func() {
+		defer ws.logGoroutineDone("Message Consumer")
+
+		err := ws.consumer.ConsumeMessages(ws.conn)
+		if err != nil {
+			log.Printf("err: consume messages: %s", err)
+		}
+	}()
 
 	<-ctx.Done()
 }
@@ -110,7 +127,7 @@ func (ws *chatWS) ping(ctx context.Context) {
 	}()
 
 	for {
-		tickTime := <-ws.pingTicker.C
+		<-ws.pingTicker.C
 		err := ws.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
 		ws.pingTicker.Reset(30 * time.Second)
 		if err != nil {
@@ -121,9 +138,10 @@ func (ws *chatWS) ping(ctx context.Context) {
 
 			log.Printf("err: send ping message: %s", err)
 			ws.pingTicker.Reset(pingTickerDuration)
-		} else {
-			log.Printf("Ping sent at: %s", tickTime.String())
 		}
+		// else {
+		// 	log.Printf("Ping sent at: %s", tickTime.String())
+		// }
 	}
 }
 
