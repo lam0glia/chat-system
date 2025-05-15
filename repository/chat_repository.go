@@ -10,11 +10,11 @@ import (
 
 const pairFormat = "%d.%d"
 
-type message struct {
+type chat struct {
 	db *gocql.Session
 }
 
-func (r *message) pair(fromID, toID uint64) string {
+func (r *chat) pair(fromID, toID uint64) string {
 	if fromID < toID {
 		return fmt.Sprintf(pairFormat, fromID, toID)
 	} else {
@@ -22,7 +22,7 @@ func (r *message) pair(fromID, toID uint64) string {
 	}
 }
 
-func (r *message) Insert(ctx context.Context, message *domain.Message) error {
+func (r *chat) InsertMessage(ctx context.Context, message *domain.Message) error {
 	return r.db.Query(
 		"INSERT INTO messages (id, content, from_id, to_id, created_at, pair) VALUES (?, ?, ?, ?, ?, ?)",
 		message.ID,
@@ -34,7 +34,7 @@ func (r *message) Insert(ctx context.Context, message *domain.Message) error {
 	).WithContext(ctx).Exec()
 }
 
-func (r *message) List(
+func (r *chat) ListMessages(
 	ctx context.Context,
 	fromID,
 	toID uint64,
@@ -99,8 +99,8 @@ func (r *message) List(
 	return messages, nil
 }
 
-func NewMessage(session *gocql.Session) *message {
-	return &message{
+func NewChat(session *gocql.Session) *chat {
+	return &chat{
 		db: session,
 	}
 }

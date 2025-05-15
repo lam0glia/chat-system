@@ -23,10 +23,17 @@ func NewMessage(id, fromID, toID uint64, content string) *Message {
 	}
 }
 
-type SentMessageRequest struct {
+type SendMessageRequest struct {
 	From    uint64
 	To      uint64 `json:"to"`
 	Content string `json:"content"`
+}
+
+type MessageReceivedResponse struct {
+	ID        uint64    `json:"id"`
+	FromID    uint64    `json:"from"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 type ListMessageRequest struct {
@@ -34,12 +41,9 @@ type ListMessageRequest struct {
 	To       uint64  `form:"to" binding:"required"`
 }
 
-type MessageWriter interface {
-	Insert(ctx context.Context, message *Message) error
-}
-
-type MessageReader interface {
-	List(
+type ChatRepository interface {
+	InsertMessage(ctx context.Context, message *Message) error
+	ListMessages(
 		ctx context.Context,
 		fromID,
 		toID uint64,
@@ -49,13 +53,10 @@ type MessageReader interface {
 }
 
 type SendMessageUseCase interface {
-	Execute(ctx context.Context, message *SentMessageRequest) error
+	Execute(ctx context.Context, message *SendMessageRequest) error
 }
 
-type MessageEventProducer interface {
-	PublishMessage(*Message) error
-}
-
-type MessageEventConsumer interface {
-	ConsumeMessages(ctx context.Context) error
+type ChatStram interface {
+	DispatchMessage(*Message) error
+	ConsumeMessages(WebsocketConnection) error
 }

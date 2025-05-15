@@ -8,11 +8,12 @@ import (
 )
 
 type sendMessage struct {
-	messageEventProducer domain.MessageEventProducer
+	chatStreamDispatcher domain.ChatStram
+	chatRepositoryWriter domain.ChatRepository
 	uidGenerator         domain.UIDGenerator
 }
 
-func (uc *sendMessage) Execute(ctx context.Context, messageRequest *domain.SentMessageRequest) error {
+func (uc *sendMessage) Execute(ctx context.Context, messageRequest *domain.SendMessageRequest) error {
 	id, err := uc.uidGenerator.NextID()
 	if err != nil {
 		return fmt.Errorf("generate new unique id: %w", err)
@@ -25,7 +26,11 @@ func (uc *sendMessage) Execute(ctx context.Context, messageRequest *domain.SentM
 		messageRequest.Content,
 	)
 
-	if err = uc.messageEventProducer.PublishMessage(message); err != nil {
+	if err = uc.chatRepositoryWriter.InsertMessage(ctx, message); err != nil {
+		return fmt.Errorf("insert message: %w", err)
+	}
+
+	if err = uc.chatStreamDispatcher.DispatchMessage(message); err != nil {
 		return fmt.Errorf("publish event: %w", err)
 	}
 
@@ -33,11 +38,13 @@ func (uc *sendMessage) Execute(ctx context.Context, messageRequest *domain.SentM
 }
 
 func NewSendMessage(
-	producer domain.MessageEventProducer,
+	chatStreamDispatcher domain.ChatStram,
+	chatRepositoryWriter domain.ChatRepository,
 	uidGenerator domain.UIDGenerator,
 ) *sendMessage {
 	return &sendMessage{
-		messageEventProducer: producer,
+		chatStreamDispatcher: chatStreamDispatcher,
+		chatRepositoryWriter: chatRepositoryWriter,
 		uidGenerator:         uidGenerator,
 	}
 }

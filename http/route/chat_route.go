@@ -8,13 +8,12 @@ import (
 )
 
 func chatRouter(r gin.IRouter, app *bootstrap.App) {
-	messageRepo := repository.NewMessage(app.CassandraSession)
+	chatRepository := repository.NewChat(app.CassandraSession)
 
 	h := handler.NewChat(
-		messageRepo,
 		app.RabbitMQConnection,
 		app.SonyFlake,
-		messageRepo,
+		chatRepository,
 	)
 
 	chat := r.Group("/chat")

@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/lam0glia/chat-system/domain"
-	"github.com/lam0glia/chat-system/queue"
+	"github.com/lam0glia/chat-system/stream"
 )
 
 const (
@@ -23,7 +23,8 @@ type chatWS struct {
 	userID             uint64
 	sendMessageUseCase domain.SendMessageUseCase
 	pingTicker         *time.Ticker
-	consumer           *queue.Chat
+	consumer           *stream.Chat
+	done               chan bool
 }
 
 func newChatWS(
@@ -31,7 +32,7 @@ func newChatWS(
 	upgrader websocket.Upgrader,
 	userID uint64,
 	sendMessageUseCase domain.SendMessageUseCase,
-	consumer *queue.Chat,
+	consumer *stream.Chat,
 ) (*chatWS, error) {
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -43,7 +44,7 @@ func newChatWS(
 	conn.SetPongHandler(func(string) error {
 		now := time.Now()
 
-		log.Printf("Pong received at: %s", time.Now().String())
+		// log.Printf("Pong received at: %s", time.Now().String())
 
 		// var err error
 		// if err = h.presenceWriter.Update(ctx, from, true); err != nil {
@@ -62,20 +63,19 @@ func newChatWS(
 		sendMessageUseCase: sendMessageUseCase,
 		pingTicker:         ticker,
 		consumer:           consumer,
+		done:               make(chan bool),
 	}, nil
 }
 
-func (ws *chatWS) read(
-	ctx context.Context,
-	done chan bool,
-) {
+func (ws *chatWS) readFromClient(ctx context.Context) {
 	defer func() {
 		ws.logGoroutineDone("Read")
-		done <- true
+		ws.done <- true
 	}()
 
 	for {
 		_, r, err := ws.conn.NextReader()
+
 		if err != nil {
 			if closeErr, is := err.(*websocket.CloseError); is {
 				log.Printf("Close message received: [%d] %s", closeErr.Code, closeErr.Text)
@@ -86,7 +86,7 @@ func (ws *chatWS) read(
 			break
 		}
 
-		message := domain.SentMessageRequest{
+		message := domain.SendMessageRequest{
 			From: ws.userID,
 		}
 
@@ -98,7 +98,7 @@ func (ws *chatWS) read(
 	}
 }
 
-func (ws *chatWS) write(ctx context.Context) {
+func (ws *chatWS) writeToClient(ctx context.Context) {
 	defer func() {
 		ws.logGoroutineDone("Write")
 		ws.consumer.Close()
