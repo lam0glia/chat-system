@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -13,16 +14,26 @@ type presence struct {
 }
 
 const onlineStatus = "online"
+const onlinePresenceDuration = 40 * time.Second
 
-func (r *presence) Update(ctx context.Context, userID uint64, online bool) (err error) {
-	key := fmt.Sprintf("%d", userID)
-	if online {
-		err = r.db.Set(ctx, key, onlineStatus, 0).Err()
-	} else {
-		err = r.db.Del(ctx, key).Err()
-	}
+func (r *presence) SetKeyExpiration(ctx context.Context, userID uint64) error {
+	key := r.getKey(userID)
 
-	return err
+	return r.db.Expire(ctx, key, onlinePresenceDuration).Err()
+}
+
+func (r *presence) UpdateUserStatus(ctx context.Context, userID uint64, status string) error {
+	key := r.getKey(userID)
+
+	return r.db.Set(
+		ctx,
+		key,
+		onlineStatus,
+		onlinePresenceDuration).Err()
+}
+
+func (r *presence) DeleteUserStatus(ctx context.Context, userID uint64) error {
+	return r.db.Del(ctx, r.getKey(userID)).Err()
 }
 
 func (r *presence) IsOnline(ctx context.Context, userID uint64) (bool, error) {

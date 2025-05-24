@@ -25,6 +25,7 @@ type chatWS struct {
 	pingTicker         *time.Ticker
 	consumer           *stream.Chat
 	done               chan bool
+	presenceService    domain.PresenceService
 }
 
 func newChatWS(
@@ -33,6 +34,7 @@ func newChatWS(
 	userID uint64,
 	sendMessageUseCase domain.SendMessageUseCase,
 	consumer *stream.Chat,
+	presenceService domain.PresenceService,
 ) (*chatWS, error) {
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -46,10 +48,10 @@ func newChatWS(
 
 		// log.Printf("Pong received at: %s", time.Now().String())
 
-		// var err error
-		// if err = h.presenceWriter.Update(ctx, from, true); err != nil {
-		// 	log.Printf("err: update presence: %s", err)
-		// }
+		if err := presenceService.RefreshUserPresence(c.Request.Context(), userID); err != nil {
+			log.Printf("err: refresh presence: %s", err.Error())
+			return err
+		}
 
 		conn.SetReadDeadline(now.Add(pongDeadlineDuration))
 		ticker.Reset(pingTickerDuration)
@@ -64,12 +66,13 @@ func newChatWS(
 		pingTicker:         ticker,
 		consumer:           consumer,
 		done:               make(chan bool),
+		presenceService:    presenceService,
 	}, nil
 }
 
 func (ws *chatWS) readFromClient(ctx context.Context) {
 	defer func() {
-		ws.logGoroutineDone("Read")
+		logGoroutineDone("ReadFromClient")
 		ws.done <- true
 	}()
 
@@ -100,12 +103,12 @@ func (ws *chatWS) readFromClient(ctx context.Context) {
 
 func (ws *chatWS) writeToClient(ctx context.Context) {
 	defer func() {
-		ws.logGoroutineDone("Write")
+		logGoroutineDone("WriteToClient")
 		ws.consumer.Close()
 	}()
 
 	go func() {
-		defer ws.logGoroutineDone("Message Consumer")
+		defer logGoroutineDone("ConsumeMessages")
 
 		err := ws.consumer.ConsumeMessages(ws.conn)
 		if err != nil {
@@ -117,7 +120,7 @@ func (ws *chatWS) writeToClient(ctx context.Context) {
 }
 
 func (ws *chatWS) ping(ctx context.Context) {
-	defer ws.logGoroutineDone("Ping")
+	defer logGoroutineDone("Ping")
 
 	go func() {
 		// Reset ticker to break the ping loop
@@ -145,7 +148,16 @@ func (ws *chatWS) ping(ctx context.Context) {
 	}
 }
 
-func (ws *chatWS) logGoroutineDone(name string) {
+func (ws *chatWS) writePresenceUpdates() {
+	defer logGoroutineDone("SubscribeUserPresenceUpdate")
+
+	var err error
+	if err = ws.presenceService.SubscribeUserPresenceUpdate(ws.conn); err != nil {
+		log.Printf("err: subscribe presence: %s", err.Error())
+	}
+}
+
+func logGoroutineDone(name string) {
 	log.Printf("%s goroutine done", name)
 }
 

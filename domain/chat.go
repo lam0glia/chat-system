@@ -56,7 +56,7 @@ type SendMessageUseCase interface {
 	Execute(ctx context.Context, message *SendMessageRequest) error
 }
 
-type ChatStram interface {
+type ChatStream interface {
 	DispatchMessage(*Message) error
 	ConsumeMessages(WebsocketConnection) error
 }

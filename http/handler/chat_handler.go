@@ -15,16 +15,22 @@ import (
 )
 
 type Chat struct {
-	queueConn      *amqp.Connection
-	upgrader       websocket.Upgrader
-	chatRepository domain.ChatRepository
-	uidGenerator   domain.UIDGenerator
+	queueConn       *amqp.Connection
+	upgrader        websocket.Upgrader
+	chatRepository  domain.ChatRepository
+	uidGenerator    domain.UIDGenerator
+	presenceService domain.PresenceService
+	channelFactory  domain.ChannelFactory
 }
 
+/*
+IMPORTANT: there are two channels that use the same websocket connection
+to write to the client and its not concurrency safe.
+*/
 func (h *Chat) WebSocket(c *gin.Context) {
-	from := middleware.GetUserIDFromContext(c)
+	userID := middleware.GetUserIDFromContext(c)
 
-	chatStream, err := stream.NewChat(h.queueConn, from)
+	chatStream, err := stream.NewChat(h.queueConn, userID)
 	if err != nil {
 		abortWithInternalError(c, err)
 		return
@@ -38,7 +44,20 @@ func (h *Chat) WebSocket(c *gin.Context) {
 		h.uidGenerator,
 	)
 
-	ws, err := newChatWS(c, h.upgrader, from, sendMessageUseCase, chatStream)
+	channel, err := h.channelFactory.NewChannel()
+	if err != nil {
+		abortWithInternalError(c, err)
+		return
+	}
+
+	ws, err := newChatWS(
+		c,
+		h.upgrader,
+		userID,
+		sendMessageUseCase,
+		chatStream,
+		h.presenceService,
+	)
 	if err != nil {
 		log.Printf("err: upgrade: %s", err)
 		return
@@ -46,11 +65,25 @@ func (h *Chat) WebSocket(c *gin.Context) {
 
 	defer ws.close()
 
+	h.presenceService.SetChannel(channel)
+
 	ctx := c.Request.Context()
+
+	defer func() {
+		if err = h.presenceService.SetUserOffline(ctx, userID); err != nil {
+			log.Printf("err: set user status offline: %s", err.Error())
+		}
+	}()
+
+	if err = h.presenceService.SetUserOnline(ctx, userID); err != nil {
+		log.Printf("err: set user status online: %s", err.Error())
+	}
 
 	go ws.readFromClient(ctx)
 
 	go ws.writeToClient(ctx)
+
+	go ws.writePresenceUpdates()
 
 	go ws.ping(ctx)
 
@@ -86,14 +119,18 @@ func NewChat(
 	queueConn *amqp.Connection,
 	uidGenerator domain.UIDGenerator,
 	chatRepository domain.ChatRepository,
+	channelFactory domain.ChannelFactory,
+	presenceService domain.PresenceService,
 ) *Chat {
 	return &Chat{
 		upgrader: websocket.Upgrader{
 			HandshakeTimeout: 10 * time.Second,
 		},
-		queueConn:      queueConn,
-		uidGenerator:   uidGenerator,
-		chatRepository: chatRepository,
+		queueConn:       queueConn,
+		uidGenerator:    uidGenerator,
+		chatRepository:  chatRepository,
+		channelFactory:  channelFactory,
+		presenceService: presenceService,
 	}
 }
 

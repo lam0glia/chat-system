@@ -8,7 +8,7 @@ import (
 )
 
 type sendMessage struct {
-	chatStreamDispatcher domain.ChatStram
+	chatStreamDispatcher domain.ChatStream
 	chatRepositoryWriter domain.ChatRepository
 	uidGenerator         domain.UIDGenerator
 }
@@ -38,7 +38,7 @@ func (uc *sendMessage) Execute(ctx context.Context, messageRequest *domain.SendM
 }
 
 func NewSendMessage(
-	chatStreamDispatcher domain.ChatStram,
+	chatStreamDispatcher domain.ChatStream,
 	chatRepositoryWriter domain.ChatRepository,
 	uidGenerator domain.UIDGenerator,
 ) *sendMessage {
