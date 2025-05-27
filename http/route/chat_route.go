@@ -7,6 +7,7 @@ import (
 	"github.com/lam0glia/chat-system/http/handler"
 	"github.com/lam0glia/chat-system/repository"
 	"github.com/lam0glia/chat-system/service"
+	"github.com/lam0glia/chat-system/websocket_buffer"
 )
 
 func chatRouter(r gin.IRouter, app *bootstrap.App) {
@@ -14,6 +15,7 @@ func chatRouter(r gin.IRouter, app *bootstrap.App) {
 	messageBroker := event.NewRabbitMQ(app.RabbitMQConnection)
 	presenceRepository := repository.NewPresence(app.RedisClient)
 	presenceService := service.NewPresence(presenceRepository)
+	writeBuffer := &websocket_buffer.WriteBuffer{}
 
 	h := handler.NewChat(
 		app.RabbitMQConnection,
@@ -21,6 +23,7 @@ func chatRouter(r gin.IRouter, app *bootstrap.App) {
 		chatRepository,
 		messageBroker,
 		presenceService,
+		writeBuffer,
 	)
 
 	chat := r.Group("/chat")

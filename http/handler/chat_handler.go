@@ -15,12 +15,13 @@ import (
 )
 
 type Chat struct {
-	queueConn       *amqp.Connection
-	upgrader        websocket.Upgrader
-	chatRepository  domain.ChatRepository
-	uidGenerator    domain.UIDGenerator
-	presenceService domain.PresenceService
-	channelFactory  domain.ChannelFactory
+	queueConn            *amqp.Connection
+	upgrader             websocket.Upgrader
+	chatRepository       domain.ChatRepository
+	uidGenerator         domain.UIDGenerator
+	presenceService      domain.PresenceService
+	channelFactory       domain.ChannelFactory
+	websocketWriteBuffer domain.WebsocketWriteBuffer
 }
 
 /*
@@ -57,6 +58,7 @@ func (h *Chat) WebSocket(c *gin.Context) {
 		sendMessageUseCase,
 		chatStream,
 		h.presenceService,
+		h.websocketWriteBuffer,
 	)
 	if err != nil {
 		log.Printf("err: upgrade: %s", err)
@@ -81,9 +83,11 @@ func (h *Chat) WebSocket(c *gin.Context) {
 
 	go ws.readFromClient(ctx)
 
-	go ws.writeToClient(ctx)
+	// TODO: Close goroutine
+	go h.websocketWriteBuffer.DeliveryToClient()
 
-	go ws.writePresenceUpdates()
+	// TODO: Handle error
+	go h.presenceService.SubscribeUserPresenceUpdate(h.websocketWriteBuffer)
 
 	go ws.ping(ctx)
 
@@ -121,16 +125,18 @@ func NewChat(
 	chatRepository domain.ChatRepository,
 	channelFactory domain.ChannelFactory,
 	presenceService domain.PresenceService,
+	websocketWriteBuffer domain.WebsocketWriteBuffer,
 ) *Chat {
 	return &Chat{
 		upgrader: websocket.Upgrader{
 			HandshakeTimeout: 10 * time.Second,
 		},
-		queueConn:       queueConn,
-		uidGenerator:    uidGenerator,
-		chatRepository:  chatRepository,
-		channelFactory:  channelFactory,
-		presenceService: presenceService,
+		queueConn:            queueConn,
+		uidGenerator:         uidGenerator,
+		chatRepository:       chatRepository,
+		channelFactory:       channelFactory,
+		presenceService:      presenceService,
+		websocketWriteBuffer: websocketWriteBuffer,
 	}
 }
 

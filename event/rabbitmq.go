@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/lam0glia/chat-system/domain"
+	"github.com/lam0glia/chat-system/internal"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -95,8 +96,7 @@ func (c *rabbitMQChannel) Publish(exchange, key string, body any) error {
 	return nil
 }
 
-// ConsumeMessages implements domain.StreamChannel.
-func (c *rabbitMQChannel) Subscribe(conn domain.WebsocketConnection) error {
+func (c *rabbitMQChannel) Subscribe(buff domain.WebsocketWriteBuffer) error {
 	msgs, err := c.channel.Consume(
 		c.queueName, // queue
 		"",          // consumer
@@ -110,6 +110,8 @@ func (c *rabbitMQChannel) Subscribe(conn domain.WebsocketConnection) error {
 		return err
 	}
 
+	defer internal.LogGoroutineClosed("RabbitMQChannel.Subscribe")
+
 	for d := range msgs {
 		var msg any
 
@@ -121,10 +123,7 @@ func (c *rabbitMQChannel) Subscribe(conn domain.WebsocketConnection) error {
 			continue
 		}
 
-		if err = conn.WriteJSON(msg); err != nil {
-			log.Printf("err: write json: %s", err)
-			continue
-		}
+		buff.Write(msg)
 
 		if err = d.Ack(false); err != nil {
 			log.Printf("err: ack: %s", err)

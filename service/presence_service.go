@@ -42,8 +42,8 @@ func (s *presenceService) RefreshUserPresence(ctx context.Context, userID uint64
 	return s.repository.SetKeyExpiration(ctx, userID)
 }
 
-func (s *presenceService) SubscribeUserPresenceUpdate(conn domain.WebsocketConnection) error {
-	return s.channel.Subscribe(conn)
+func (s *presenceService) SubscribeUserPresenceUpdate(buff domain.WebsocketWriteBuffer) error {
+	return s.channel.Subscribe(buff)
 }
 
 func (s *presenceService) SetUserOffline(ctx context.Context, userID uint64) error {

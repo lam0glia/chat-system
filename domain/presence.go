@@ -21,7 +21,7 @@ type PresenceService interface {
 	SetChannel(channel StreamChannel)
 	SetUserOnline(ctx context.Context, userID uint64) error
 	RefreshUserPresence(ctx context.Context, userID uint64) error
-	SubscribeUserPresenceUpdate(conn WebsocketConnection) error
+	SubscribeUserPresenceUpdate(buff WebsocketWriteBuffer) error
 	SetUserOffline(ctx context.Context, userID uint64) error
 }
 

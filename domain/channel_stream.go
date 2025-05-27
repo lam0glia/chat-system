@@ -8,6 +8,6 @@ type ChannelFactory interface {
 
 type StreamChannel interface {
 	Publish(exchange, key string, body any) error
-	Subscribe(conn WebsocketConnection) error
+	Subscribe(buff WebsocketWriteBuffer) error
 	Close()
 }
